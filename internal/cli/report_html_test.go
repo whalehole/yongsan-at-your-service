@@ -115,3 +115,156 @@ func TestBatchHTMLReportReturnsWriteFailure(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestBatchHTMLReportBuildAndSaveOutcomes(t *testing.T) {
+	report := exampleBatchReport()
+	report.Results = []result{
+		{Project: "group/saved", Operation: "build", Image: "saved:v1", Status: "built", BuildStatus: "built", SaveStatus: "saved", Archive: "/releases/saved-v1.tar", Duration: "1.5s"},
+		{Project: "group/save-failed", Operation: "build", Image: "save-failed:v1", Status: "failed", BuildStatus: "built", SaveStatus: "failed", Error: "image export failed", SaveError: "docker save failed: disk full\nCould not write archive.", Duration: "1s"},
+	}
+	var out bytes.Buffer
+	if err := renderBatchReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	html := out.String()
+	for _, text := range []string{
+		"Completed with failures", "<strong>1</strong><span>Passed</span>", "<strong>1</strong><span>Failed</span>",
+		`aria-label="Docker save totals"`, "<span>1 saved</span>", "<span>1 failed</span>", "<span>0 planned</span>", "<span>0 not run</span>",
+		`<span class="stage-label">Docker save</span> <span class="badge pass">SAVED</span>`,
+		`<span class="stage-label">Docker save</span> <span class="badge fail">FAIL</span>`,
+		"/releases/saved-v1.tar", "docker save failed: disk full\nCould not write archive.",
+	} {
+		if !strings.Contains(html, text) {
+			t.Errorf("missing %q", text)
+		}
+	}
+	failedRow := html[strings.Index(html, "group/save-failed"):]
+	failedRow = failedRow[:strings.Index(failedRow, "</tr>")]
+	if !strings.Contains(failedRow, `<span class="stage-label">Build</span> <span class="badge pass">PASS</span>`) {
+		t.Error("successful build was not reported separately from failed save")
+	}
+	if strings.Contains(failedRow, "Image archive</span>") {
+		t.Error("failed save was presented as a completed image archive")
+	}
+}
+
+func TestBatchHTMLReportPlannedAndUnattemptedSaves(t *testing.T) {
+	report := exampleBatchReport()
+	report.DryRun = true
+	report.Results = []result{
+		{Project: "group/planned", Operation: "build", Status: "planned", BuildStatus: "planned", SaveStatus: "planned"},
+		{Project: "group/build-failed", Operation: "build", Status: "failed", BuildStatus: "failed", SaveStatus: "not-run", Error: "source tag not found"},
+	}
+	var out bytes.Buffer
+	if err := renderBatchReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	html := out.String()
+	for _, text := range []string{
+		"<strong>0</strong><span>Passed</span>", "<span>0 saved</span>", "<span>0 failed</span>", "<span>1 planned</span>", "<span>1 not run</span>",
+		`<span class="stage-label">Build</span> <span class="badge planned">PLANNED</span>`,
+		`<span class="stage-label">Build</span> <span class="badge fail">FAIL</span>`,
+		`<span class="stage-label">Docker save</span> <span class="badge skipped">NOT RUN</span>`,
+		"Image archive was not written (dry run).", "Save was not attempted because the build workflow stopped before export.", "source tag not found", "No image archives were written.",
+	} {
+		if !strings.Contains(html, text) {
+			t.Errorf("missing %q", text)
+		}
+	}
+	if strings.Contains(html, ">SAVED</span>") || strings.Contains(html, ">PASS</span>") || strings.Contains(html, "Image archive</span>") {
+		t.Error("planned or unattempted saves were presented as completed")
+	}
+}
+
+func TestBatchHTMLReportSaveNotRunAfterSuccessfulBuild(t *testing.T) {
+	report := exampleBatchReport()
+	report.Results = []result{{Project: "group/built", Operation: "build", Status: "failed", BuildStatus: "built", SaveStatus: "not-run", Error: "could not write terminal logs"}}
+	var out bytes.Buffer
+	if err := renderBatchReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	html := out.String()
+	for _, text := range []string{
+		`<span class="stage-label">Build</span> <span class="badge pass">PASS</span>`,
+		`<span class="stage-label">Docker save</span> <span class="badge skipped">NOT RUN</span>`,
+		"<span>0 failed</span>", "<span>1 not run</span>", "could not write terminal logs", "Save was not attempted because the build workflow stopped before export.",
+	} {
+		if !strings.Contains(html, text) {
+			t.Errorf("missing %q", text)
+		}
+	}
+}
+
+func TestBatchHTMLReportEscapesSaveDetails(t *testing.T) {
+	report := exampleBatchReport()
+	report.Results = []result{
+		{Project: "group/saved", Operation: "build", Status: "built", BuildStatus: "built", SaveStatus: "saved", Archive: `/releases/<script>alert("path")</script>.tar`},
+		{Project: "group/save-failed", Operation: "build", Status: "failed", BuildStatus: "built", SaveStatus: "failed", SaveError: `<img src=x onerror="alert(1)"> & export failed`},
+	}
+	var out bytes.Buffer
+	if err := renderBatchReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	html := out.String()
+	if strings.Contains(html, "<script>") || strings.Contains(html, "<img src=x") {
+		t.Error("save details contain unescaped markup")
+	}
+	for _, escaped := range []string{"&lt;script&gt;", "&lt;/script&gt;.tar", "&lt;img src=x", "&amp; export failed"} {
+		if !strings.Contains(html, escaped) {
+			t.Errorf("missing escaped text %q", escaped)
+		}
+	}
+}
+
+func TestBatchHTMLReportWithoutSaveHasNoSaveSummary(t *testing.T) {
+	report := exampleBatchReport()
+	report.Results = []result{{Project: "group/built", Operation: "build", Status: "built", BuildStatus: "built"}}
+	var out bytes.Buffer
+	if err := renderBatchReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	html := out.String()
+	if strings.Contains(html, `aria-label="Docker save totals"`) || strings.Contains(html, `<span class="stage-label">Docker save</span>`) {
+		t.Error("report implies an image save was requested")
+	}
+	if !strings.Contains(html, `<span class="stage-label">Build</span> <span class="badge pass">PASS</span>`) {
+		t.Error("build outcome is missing")
+	}
+}
+
+func TestBatchHTMLReportArchiveRunMetadata(t *testing.T) {
+	for _, withMetadata := range []bool{true, false} {
+		report := exampleBatchReport()
+		report.Results = []result{
+			{Project: "group/build-failed", Operation: "build", Status: "failed", BuildStatus: "failed", SaveStatus: "not-run", Error: "source tag not found"},
+			{Project: "group/saved", Operation: "build", Status: "built", BuildStatus: "built", SaveStatus: "saved", Archive: "/images/run/saved_v1.tar"},
+		}
+		if withMetadata {
+			report.Results[1].BatchID = "20261125T093000.123456789Z"
+			report.Results[1].ArchiveDirectory = "/images/<archive>&exports/20261125T093000.123456789Z"
+		}
+		var out bytes.Buffer
+		if err := renderBatchReport(&out, report); err != nil {
+			t.Fatal(err)
+		}
+		html := out.String()
+		if !withMetadata {
+			if strings.Contains(html, "<dt>Batch ID</dt>") || strings.Contains(html, "<dt>Archive directory</dt>") {
+				t.Error("report shows unavailable archive run metadata")
+			}
+			continue
+		}
+		for _, text := range []string{
+			"<dt>Batch ID</dt><dd><code>20261125T093000.123456789Z</code></dd>",
+			"<dt>Archive directory</dt><dd><code>/images/&lt;archive&gt;&amp;exports/20261125T093000.123456789Z</code></dd>",
+			"group/build-failed", "group/saved", "/images/run/saved_v1.tar", "source tag not found",
+		} {
+			if !strings.Contains(html, text) {
+				t.Errorf("missing %q", text)
+			}
+		}
+		if strings.Contains(html, "/images/<archive>") {
+			t.Error("archive directory contains unescaped markup")
+		}
+	}
+}

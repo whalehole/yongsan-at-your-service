@@ -59,13 +59,19 @@ func (a *app) tagJob(c *gitlab.Client, repo config.TagRepository) job {
 
 func boolValue(value *bool) bool { return value != nil && *value }
 
-func (a *app) buildJob(c *gitlab.Client, repo config.BuildRepository) job {
+func (a *app) buildJob(c *gitlab.Client, repo config.BuildRepository, save imageSaveOptions) job {
+	if save.enabled && save.run == nil {
+		save.run = &imageSaveRun{parent: save.directory, started: time.Now().UTC()}
+	}
 	return func(ctx context.Context) result {
 		reference := repo.Source.Commit
 		if reference == "" {
 			reference = repo.Source.Tag
 		}
-		r := result{Project: repo.Project, Operation: "build", Reference: reference, Image: repo.Image, Status: "failed"}
+		r := result{Project: repo.Project, Operation: "build", Reference: reference, Image: repo.Image, Status: "failed", BuildStatus: "failed"}
+		if save.enabled {
+			r.SaveStatus = "not-run"
+		}
 		progress(ctx, r, "resolving source commit")
 		if err := ctx.Err(); err != nil {
 			r.Error = err.Error()
@@ -117,8 +123,22 @@ func (a *app) buildJob(c *gitlab.Client, repo config.BuildRepository) job {
 			r.Error = "another selected build uses the same output image " + r.Image + "; set distinct image overrides"
 			return r
 		}
+		if save.enabled {
+			name, err := builder.ArchiveName(r.Image)
+			if err == nil {
+				err = save.run.reserveName(name)
+			}
+			if err != nil {
+				r.Error = err.Error()
+				return r
+			}
+		}
 		if a.dryRun {
 			r.Status = "planned"
+			r.BuildStatus = "planned"
+			if save.enabled {
+				r.SaveStatus = "planned"
+			}
 			return r
 		}
 		logs := &lineWriter{sinkMu: &a.logMu, out: a.options.Err, prefix: repo.Project + " -> " + r.Image}
@@ -133,9 +153,30 @@ func (a *app) buildJob(c *gitlab.Client, repo config.BuildRepository) job {
 			r.Error = err.Error()
 			return r
 		}
+		r.BuildStatus = "built"
 		if closeErr != nil {
 			r.Error = closeErr.Error()
 			return r
+		}
+		if save.enabled {
+			r.SaveStatus = "failed"
+			directory, saveErr := save.run.destination()
+			var archive string
+			if saveErr == nil {
+				archive, saveErr = b.Save(ctx, r.Image, directory)
+			}
+			closeErr := logs.Close()
+			if saveErr != nil {
+				r.SaveError = saveErr.Error()
+				r.Error = "Docker image built, but saving its .tar archive failed: " + saveErr.Error()
+				return r
+			}
+			r.Archive, r.SaveStatus = archive, "saved"
+			progress(ctx, r, "saved Docker image archive: "+archive)
+			if closeErr != nil {
+				r.Error = closeErr.Error()
+				return r
+			}
 		}
 		r.Status = "built"
 		return r
@@ -162,6 +203,9 @@ func (a *app) executeWithReport(ctx context.Context, jobs []job, concurrency int
 	}
 	jobs, progressError := a.progressJobs(jobs, concurrency)
 	results := runJobs(ctx, jobs, concurrency, timeout)
+	if saveRun, ok := ctx.Value(imageSaveRunKey{}).(*imageSaveRun); ok {
+		saveRun.annotate(results)
+	}
 	var reportErr error
 	if report != nil {
 		report.data.FinishedAt = time.Now()

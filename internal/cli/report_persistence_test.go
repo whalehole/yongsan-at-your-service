@@ -24,8 +24,8 @@ func TestCanceledBatchReportIncludesQueuedJobsAndSourceReferences(t *testing.T) 
 	cancel()
 	jobs := []job{
 		a.tagJob(nil, config.TagRepository{Project: "group/tag", Branch: "release/1.0", Tag: "v1.0"}),
-		a.buildJob(nil, config.BuildRepository{Project: "group/build-a", Source: config.Source{Tag: "v1.0"}}),
-		a.buildJob(nil, config.BuildRepository{Project: "group/build-b", Source: config.Source{Tag: "v1.0"}}),
+		a.buildJob(nil, config.BuildRepository{Project: "group/build-a", Source: config.Source{Tag: "v1.0"}}, imageSaveOptions{}),
+		a.buildJob(nil, config.BuildRepository{Project: "group/build-b", Source: config.Source{Tag: "v1.0"}}, imageSaveOptions{}),
 	}
 	err := a.executeBatch(ctx, jobs, 1, time.Second, batchReportOptions{}, "build", "https://gitlab.example.com")
 	if ExitCode(err) != 1 {

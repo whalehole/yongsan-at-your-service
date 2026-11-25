@@ -369,7 +369,7 @@ yas build batch --tag v1.2.0 --all-groups --no-image-prefix --non-interactive
 
 `--image-prefix` and `--no-image-prefix` are mutually exclusive and work on both build commands. Explicit prefix flags can name a valid prefix outside the list. Prefixes contain no URL scheme or image tag; a trailing slash is accepted. An image already starting with the selected prefix is left unchanged. A fully qualified image using a different registry is rejected rather than having a second registry prepended; choose Skip/`--no-image-prefix` or change that entry to a relative image name. A relative name can include additional namespaces, for example `team/service:v1`. Duplicate final output names are checked after prefixing. Progress and final results display the final image names.
 
-This sets local image names only. It does not push images or export `.tar` files. If you later save and load the image, the saved name includes the selected prefix.
+This sets local image names only and does not push images. If you enable `--save`, the saved image retains the selected prefix when loaded again.
 
 ### Build a configured list
 
@@ -401,8 +401,45 @@ Both build commands accept:
 | `--build-arg KEY=VALUE` | Build argument; repeatable, with later values winning for the same key |
 | `--no-cache[=true\|false]` | Disable or enable Docker build-cache reuse |
 | `--pull[=true\|false]` | Control refreshing referenced base images |
+| `--save[=true\|false]` | Save each successfully built image as a Docker `.tar` archive; default `false` |
+| `--save-dir PATH` | Parent directory for image archive batches; default `./images`; does not enable saving by itself |
 
 On batch builds, explicit build flags apply to every selected entry. Build arguments are ordinary build configuration, not a mechanism for supplying secrets.
+
+### Save built images
+
+Use `--save` on either build command to run `docker save` immediately after each successful build:
+
+```bash
+yas build one --project my-group/service-a --tag v1.2.0 --save
+yas build batch --tag v1.2.0 --save --save-dir ./release-images
+# Load a saved archive into another Docker daemon:
+docker load --input /path/to/release-images/20261125T093000.123456789Z/service-a_v1.2.0.tar
+```
+
+Interactive builds ask once, after the other build prompts, `Save built images as .tar files after build? [y/N]`. Enter or `no` leaves saving disabled. An explicit `--save` or `--save=false` bypasses this prompt. Non-interactive builds save only when `--save` is enabled; `--save-dir` selects the destination without enabling saves.
+
+Each build invocation gets one unique archive batch ID based on UTC time, in the form `YYYYMMDDTHHMMSS.nnnnnnnnnZ`. All its saved images go into that subdirectory under `--save-dir`, including for a single-image build. Repeated runs use different subdirectories:
+
+```text
+images/
+  20261125T093000.123456789Z/
+    service-a_v1.2.0.tar
+    service-b_v1.2.0.tar
+  20261125T093005.987654321Z/
+    service-a_v1.2.0.tar
+    service-b_v1.2.0.tar
+```
+
+Archive filenames follow the application's portable `<image>_<tag>.tar` convention. The image component is the final repository basename, excluding any registry or namespace; for example `registry.example.com/team/service-a:v1.2.0` becomes `service-a_v1.2.0.tar`. The filenames have no random suffix; Docker itself does not mandate a `.tar` filename convention. Image tags, including registry and namespace prefixes, are retained inside the archive for `docker load`.
+
+The batch directory is created only when the first successful build reaches the save step, so disabled saves, dry runs, and runs where every build fails create no archive directory. Missing parent directories are created as needed, and existing files are never overwritten. Two selected images that map to the same archive filename cause one job to fail before its Docker build; choose distinct image basenames or tags to resolve the collision. The built image stays in the current Docker daemon; saving does not push it to a registry. The default `./images/` directory is ignored by Git in this repository.
+
+Each save runs within its repository job's existing timeout and concurrency slot. Failed builds do not attempt a save. If saving fails or is canceled, the incomplete archive is removed and the overall job fails, while the successful build is recorded separately and its local image remains available. Other batch jobs continue normally.
+
+Text results include save status and archive paths. JSON adds `build_status`, `save_status`, `archive`, and `save_error` when applicable, plus `batch_id` and the absolute `archive_directory` once the batch directory exists. Batch HTML reports show the archive batch ID and directory, build and save outcomes separately, save totals, archive paths, and save errors. A successful requested build-and-save workflow retains overall status `built`; failure in either stage produces `failed`.
+
+`--dry-run --save` marks the build and save as planned without invoking Docker, creating the archive directory, or writing archives. Source resolution still contacts GitLab as described under dry runs.
 
 ### Source downloads and build environment
 
@@ -558,7 +595,7 @@ Each report includes:
 - The operation, application version, GitLab server, and execution or dry-run mode.
 - Start and finish timestamps with time zones, total elapsed time, concurrency, and the per-job timeout.
 - Total, passed, failed, skipped, and planned counts.
-- One row per selected repository job in configuration order, showing its outcome, exact status, source reference, resolved commit SHA when available, destination tag or image, duration, and failure details.
+- One row per selected repository job in configuration order, showing its outcome, exact status, source reference, resolved commit SHA when available, destination tag or image, duration, and failure details. Builds also show separate build/save outcomes, archive paths, and save errors when saving is requested.
 
 `created`, `deleted`, and `built` count as **passed**. `skipped` and `planned` remain separate: a skipped job made no change, and a planned dry-run job did not execute the operation. Dry-run reports describe the checks performed and do not prove that a later build or tag write will succeed. Reports contain result details rather than raw Docker logs, configuration contents, environment variables, command-line arguments, or build arguments.
 
@@ -596,7 +633,7 @@ JSON results go to standard output as an array. Prompts, errors, and labeled Doc
 
 Jobs run through a bounded worker pool. A repository failure does not stop unrelated repositories, and a failed batch can have successful tags or images. There is no rollback. Re-running a tagging batch skips tags already pointing at the requested commit; successful Docker builds can replace an existing local image tag normally.
 
-The per-job timeout begins when a worker starts that job. It includes GitLab resolution, retry delays, source download/extraction, and the Docker command as applicable; queue waiting, configuration loading, and interactive prompts are outside this timeout. `Ctrl+C`/SIGINT and SIGTERM cancel outstanding work and running Docker commands. Already completed tags and images remain, and temporary downloaded source is cleaned up.
+The per-job timeout begins when a worker starts that job. It includes GitLab resolution, retry delays, source download/extraction, Docker builds, and requested image saves as applicable; queue waiting, configuration loading, and interactive prompts are outside this timeout. `Ctrl+C`/SIGINT and SIGTERM cancel outstanding work and running Docker commands. Already completed tags, images, and archives remain; temporary downloaded source and incomplete archives are cleaned up.
 
 | Exit code | Meaning |
 | --- | --- |

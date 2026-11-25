@@ -395,10 +395,12 @@ func (b *buildFlags) apply(cmd *cobra.Command, base config.BuildOptions) (config
 }
 
 func (a *app) buildOne() *cobra.Command {
+	var save imageSaveOptions
 	var prefixFlags imagePrefixFlags
 	var repo config.BuildRepository
 	var flags buildFlags
 	cmd := &cobra.Command{Use: "one", Short: "Build one image; prompt for missing required inputs", Args: cobra.NoArgs}
+	save.bind(cmd)
 	f := cmd.Flags()
 	f.StringVar(&repo.Project, "project", "", "GitLab project ID or full namespace/project path")
 	f.StringVar(&repo.Source.Commit, "commit", "", "Source commit SHA (full or at least 7 characters) (exclusive with --tag)")
@@ -466,17 +468,22 @@ func (a *app) buildOne() *cobra.Command {
 		if err := config.ValidateBuild(repo); err != nil {
 			return usageError(err)
 		}
+		saveOptions, err := a.chooseImageSave(cmd, save)
+		if err != nil {
+			return usageError(err)
+		}
 		c, err := clientFor(cfg)
 		if err != nil {
 			return err
 		}
 		timeout, _ := time.ParseDuration(cfg.Building.Timeout)
-		return a.execute(cmd.Context(), []job{a.buildJob(c, repo)}, 1, timeout)
+		return a.execute(saveOptions.context(cmd.Context()), []job{a.buildJob(c, repo, saveOptions)}, 1, timeout)
 	}
 	return cmd
 }
 
 func (a *app) buildBatch() *cobra.Command {
+	var save imageSaveOptions
 	var report batchReportOptions
 	var tag string
 	var images []string
@@ -486,6 +493,7 @@ func (a *app) buildBatch() *cobra.Command {
 	var concurrency int
 	var only []string
 	cmd := &cobra.Command{Use: "batch", Short: "Build images from building.repositories in yas.yaml", Args: cobra.NoArgs}
+	save.bind(cmd)
 	report.bind(cmd)
 	scope.bind(cmd)
 	f := cmd.Flags()
@@ -570,16 +578,20 @@ func (a *app) buildBatch() *cobra.Command {
 		if err := cfg.ValidateBuilding(); err != nil {
 			return usageError(err)
 		}
+		saveOptions, err := a.chooseImageSave(cmd, save)
+		if err != nil {
+			return usageError(err)
+		}
 		c, err := clientFor(cfg)
 		if err != nil {
 			return err
 		}
 		jobs := make([]job, len(repos))
 		for i, r := range repos {
-			jobs[i] = a.buildJob(c, r)
+			jobs[i] = a.buildJob(c, r, saveOptions)
 		}
 		timeout, _ := time.ParseDuration(cfg.Building.Timeout)
-		return a.executeBatch(cmd.Context(), jobs, cfg.Building.Concurrency, timeout, report, "build", cfg.GitLab.URL)
+		return a.executeBatch(saveOptions.context(cmd.Context()), jobs, cfg.Building.Concurrency, timeout, report, "build", cfg.GitLab.URL)
 	}
 	return cmd
 }
