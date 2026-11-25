@@ -21,7 +21,7 @@ func (a *app) tagJob(c *gitlab.Client, repo config.TagRepository) job {
 		r := result{Project: repo.Project, Operation: "tag", Reference: reference, Tag: repo.Tag, Status: "failed"}
 		progress(ctx, r, "resolving source commit")
 		if err := ctx.Err(); err != nil {
-			r.Error = err.Error()
+			r.Error = fmt.Sprintf("Tag creation for %q in repository %q did not start: %v.", repo.Tag, repo.Project, err)
 			return r
 		}
 		var sha string
@@ -52,6 +52,15 @@ func (a *app) tagJob(c *gitlab.Client, repo config.TagRepository) job {
 		if err != nil {
 			r.Status = "failed"
 			r.Error = err.Error()
+		} else {
+			switch r.Status {
+			case "created":
+				r.Message = fmt.Sprintf("Tag %q was created at commit %s in repository %q.", r.Tag, r.Commit, r.Project)
+			case "skipped":
+				r.Message = fmt.Sprintf("Tag %q points to the requested commit in repository %q; no further change was needed.", r.Tag, r.Project)
+			case "planned":
+				r.Message = fmt.Sprintf("Tag %q would be created in repository %q; no tag was created (dry run).", r.Tag, r.Project)
+			}
 		}
 		return r
 	}
@@ -68,13 +77,13 @@ func (a *app) buildJob(c *gitlab.Client, repo config.BuildRepository, save image
 		if reference == "" {
 			reference = repo.Source.Tag
 		}
-		r := result{Project: repo.Project, Operation: "build", Reference: reference, Image: repo.Image, Status: "failed", BuildStatus: "failed"}
+		r := result{Project: repo.Project, Operation: "build", Reference: reference, Image: repo.Image, Status: "failed", BuildStatus: "not-run"}
 		if save.enabled {
 			r.SaveStatus = "not-run"
 		}
 		progress(ctx, r, "resolving source commit")
 		if err := ctx.Err(); err != nil {
-			r.Error = err.Error()
+			r.Error = fmt.Sprintf("Build for repository %q did not start: %v.", repo.Project, err)
 			return r
 		}
 		var sha string
@@ -136,6 +145,7 @@ func (a *app) buildJob(c *gitlab.Client, repo config.BuildRepository, save image
 		if a.dryRun {
 			r.Status = "planned"
 			r.BuildStatus = "planned"
+			r.Message = fmt.Sprintf("Image %q would be built from repository %q; Docker was not executed (dry run).", r.Image, r.Project)
 			if save.enabled {
 				r.SaveStatus = "planned"
 			}
@@ -143,6 +153,7 @@ func (a *app) buildJob(c *gitlab.Client, repo config.BuildRepository, save image
 		}
 		logs := &lineWriter{sinkMu: &a.logMu, out: a.options.Err, prefix: repo.Project + " -> " + r.Image}
 		b := &builder.Builder{Source: c, Output: logs, Progress: func(phase string) { progress(ctx, r, phase) }}
+		r.BuildStatus = "failed"
 		err = b.Build(ctx, builder.Options{
 			Project: repo.Project, Commit: sha, Context: repo.Context,
 			Dockerfile: repo.Dockerfile, Image: r.Image, BuildArgs: repo.BuildArgs,
@@ -150,12 +161,15 @@ func (a *app) buildJob(c *gitlab.Client, repo config.BuildRepository, save image
 		})
 		closeErr := logs.Close()
 		if err != nil {
-			r.Error = err.Error()
+			r.Error = dockerFailureMessage(err, r.Image, "build")
 			return r
 		}
 		r.BuildStatus = "built"
 		if closeErr != nil {
-			r.Error = closeErr.Error()
+			r.Error = fmt.Sprintf("Image %q was built, but its log output could not be written: %v.", r.Image, closeErr)
+			if save.enabled {
+				r.Error += " Image saving was not attempted."
+			}
 			return r
 		}
 		if save.enabled {
@@ -167,18 +181,22 @@ func (a *app) buildJob(c *gitlab.Client, repo config.BuildRepository, save image
 			}
 			closeErr := logs.Close()
 			if saveErr != nil {
-				r.SaveError = saveErr.Error()
-				r.Error = "Docker image built, but saving its .tar archive failed: " + saveErr.Error()
+				r.SaveError = dockerFailureMessage(saveErr, r.Image, "save")
+				r.Error = r.SaveError + " The built image remains in Docker; no new completed archive was produced."
 				return r
 			}
 			r.Archive, r.SaveStatus = archive, "saved"
 			progress(ctx, r, "saved Docker image archive: "+archive)
 			if closeErr != nil {
-				r.Error = closeErr.Error()
+				r.Error = fmt.Sprintf("Image %q was built and saved to %q, but its log output could not be written: %v.", r.Image, r.Archive, closeErr)
 				return r
 			}
 		}
 		r.Status = "built"
+		r.Message = fmt.Sprintf("Image %q was built in the selected Docker daemon.", r.Image)
+		if save.enabled {
+			r.Message = fmt.Sprintf("Image %q was built and saved to %q.", r.Image, r.Archive)
+		}
 		return r
 	}
 }

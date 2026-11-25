@@ -26,6 +26,7 @@ type result struct {
 	ArchiveDirectory string `json:"archive_directory,omitempty"`
 	Status           string `json:"status"`
 	Error            string `json:"error,omitempty"`
+	Message          string `json:"message,omitempty"`
 	Duration         string `json:"duration"`
 }
 
@@ -105,6 +106,8 @@ func writeResults(out io.Writer, format string, results []result) error {
 		}
 		if r.Error != "" {
 			fmt.Fprintf(w, "  %s\n", r.Error)
+		} else if r.Message != "" {
+			fmt.Fprintf(w, "  %s\n", r.Message)
 		}
 		counts[r.Status]++
 	}

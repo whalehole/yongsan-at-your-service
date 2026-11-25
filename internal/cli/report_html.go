@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"html/template"
 	"io"
 	"time"
@@ -67,18 +68,31 @@ func renderBatchReport(out io.Writer, report batchReport) error {
 		case "skipped":
 			data.Summary.Skipped++
 			row.Outcome, row.Class = "SKIPPED", "skipped"
-			row.Detail = "No change was needed."
+			row.Detail = fmt.Sprintf("No change was needed for repository %q.", r.Project)
 			if r.Operation == "tag" {
-				row.Detail = "Tag already points to the requested commit; no change was needed."
+				row.Detail = fmt.Sprintf("Tag %q already points to the requested commit in repository %q; no change was needed.", r.Tag, r.Project)
 			} else if r.Operation == "tag-delete" {
-				row.Detail = "Tag is already absent; no deletion was needed."
+				row.Detail = fmt.Sprintf("Tag %q was not found in repository %q; nothing remained to delete.", r.Tag, r.Project)
 			}
 		case "planned":
 			data.Summary.Planned++
-			row.Outcome, row.Class, row.Detail = "PLANNED", "planned", "Not executed (dry run)."
+			row.Outcome, row.Class = "PLANNED", "planned"
+			switch r.Operation {
+			case "tag-delete":
+				row.Detail = fmt.Sprintf("Tag %q exists in repository %q; no deletion was performed (dry run).", r.Tag, r.Project)
+			case "tag":
+				row.Detail = fmt.Sprintf("Tag %q would be created in repository %q; no tag was created (dry run).", r.Tag, r.Project)
+			case "build":
+				row.Detail = fmt.Sprintf("Docker image %q would be built from repository %q; Docker was not executed (dry run).", r.Image, r.Project)
+			default:
+				row.Detail = fmt.Sprintf("No operation was executed for repository %q (dry run).", r.Project)
+			}
 		default:
 			data.Summary.Failed++
 			row.Outcome, row.Class, row.Detail = "FAIL", "fail", "Operation did not complete."
+		}
+		if r.Message != "" {
+			row.Detail = r.Message
 		}
 		if r.Error != "" {
 			row.Detail = r.Error
@@ -90,6 +104,8 @@ func renderBatchReport(out io.Writer, report batchReport) error {
 			row.BuildOutcome, row.BuildClass = "FAIL", "fail"
 		case "planned":
 			row.BuildOutcome, row.BuildClass = "PLANNED", "planned"
+		case "not-run":
+			row.BuildOutcome, row.BuildClass = "NOT RUN", "skipped"
 		}
 		if r.SaveStatus != "" {
 			data.Saves.Total++
@@ -100,7 +116,7 @@ func renderBatchReport(out io.Writer, report batchReport) error {
 			case "failed":
 				data.Saves.Failed++
 				row.SaveOutcome, row.SaveClass = "FAIL", "fail"
-				if r.SaveError != "" {
+				if r.Error == "" && r.SaveError != "" {
 					row.Detail = r.SaveError
 				}
 			case "planned":

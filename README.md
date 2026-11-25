@@ -623,13 +623,15 @@ yas build batch --tag v1.2.0 --dry-run --format json
 
 A dry run still requires the configured token and contacts GitLab. Tagging checks source existence, branch reachability where requested, and existing tag conflicts. Building resolves source refs but does not download archives, inspect Dockerfiles or build contexts remotely, contact Docker, or prove that a future build will succeed. A tagging dry run also cannot prove permission to create a new protected tag because it performs no write.
 
-Operations report one result per repository job in input/configuration order, even when jobs finish in a different order. Status values are `created`, `deleted`, `built`, `skipped`, `planned`, and `failed`. Results include the resolved commit SHA when available; JSON also contains operation/source/target fields, job duration, and an error for failures.
+Operations report one result per repository job in input/configuration order, even when jobs finish in a different order. Status values are `created`, `deleted`, `built`, `skipped`, `planned`, and `failed`. Results include the resolved commit SHA when available; JSON also contains operation/source/target fields, job duration, a `message` explaining confirmed outcomes, and an `error` for failures.
 
 ```bash
 yas build batch --tag v1.2.0 --non-interactive --format json > results.json
 ```
 
 JSON results go to standard output as an array. Prompts, errors, and labeled Docker logs go to standard error, keeping standard output usable for scripts. Text output includes a table and status totals.
+
+For tag deletion, a missing-tag response is reported as `skipped` only after the repository is confirmed accessible; the explanation names the absent tag and repository. If verification fails after the initial tag lookup, the job is `failed` because absence cannot be confirmed, and no deletion was attempted. If verification fails after a deletion request returned `404`, the message states that the request was sent and its result is unconfirmed. A denial while looking up a tag is distinguished from a denial of the deletion request itself. Access denial can involve repository permissions, token permissions, or protected-tag rules; the error does not assume which rule caused it. Other unconfirmed write outcomes also preserve uncertainty instead of claiming that no change occurred. Failures before the build workflow begins mark the build as `not-run`; Docker command failures identify the image, command, and exit code and refer to the labeled Docker logs for details.
 
 Jobs run through a bounded worker pool. A repository failure does not stop unrelated repositories, and a failed batch can have successful tags or images. There is no rollback. Re-running a tagging batch skips tags already pointing at the requested commit; successful Docker builds can replace an existing local image tag normally.
 

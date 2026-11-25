@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -149,6 +150,11 @@ func TestSaveFailedBuildDoesNotAttemptExport(t *testing.T) {
 	if len(results) != 1 || results[0].Status != "failed" || results[0].BuildStatus != "failed" || results[0].SaveStatus != "not-run" || results[0].Archive != "" || results[0].SaveError != "" {
 		t.Fatalf("results=%s", output)
 	}
+	for _, explanation := range []string{"Docker build", "service:test", "exit code 9", "Docker logs"} {
+		if !strings.Contains(results[0].Error, explanation) {
+			t.Errorf("build failure lacks %q: %s", explanation, results[0].Error)
+		}
+	}
 	commands, err := os.ReadFile(f.log)
 	if err != nil || strings.Contains(string(commands), "image save") {
 		t.Fatalf("Docker commands=%q error=%v", commands, err)
@@ -170,6 +176,11 @@ func TestSaveBatchReportsExportFailureSeparatelyFromSuccessfulBuild(t *testing.T
 	if len(results) != 2 || results[0].Project != "group/a" || results[0].Status != "built" || results[0].SaveStatus != "saved" || results[1].Project != "group/b" || results[1].Status != "failed" || results[1].BuildStatus != "built" || results[1].SaveStatus != "failed" || results[1].SaveError == "" || results[1].Archive != "" {
 		t.Fatalf("results=%s", output)
 	}
+	for _, explanation := range []string{"Docker save", "b:v1", "exit code 8", "built image remains", "no new completed archive"} {
+		if !strings.Contains(results[1].Error, explanation) {
+			t.Errorf("save failure lacks %q: %s", explanation, results[1].Error)
+		}
+	}
 	entries, err := os.ReadDir(filepath.Join(f.directory, "images"))
 	if err != nil || len(entries) != 1 || !entries[0].IsDir() || entries[0].Name() != results[0].BatchID {
 		t.Fatalf("archive batch directories=%v error=%v", entries, err)
@@ -178,7 +189,7 @@ func TestSaveBatchReportsExportFailureSeparatelyFromSuccessfulBuild(t *testing.T
 	if err != nil || len(entries) != 1 || entries[0].Name() != "a_v1.tar" || results[0].BatchID != results[1].BatchID {
 		t.Fatalf("archive directory has failed or partial output: entries=%v error=%v", entries, err)
 	}
-	report := readReportHTML(t, reportPath)
+	report := html.UnescapeString(readReportHTML(t, reportPath))
 	for _, expected := range []string{"group/a", "group/b", "Docker save", results[0].Archive, results[1].SaveError, "1 saved", "1 failed"} {
 		if !strings.Contains(report, expected) {
 			t.Errorf("report missing %q", expected)

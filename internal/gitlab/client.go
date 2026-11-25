@@ -84,10 +84,10 @@ func (c *Client) ProjectPath(ctx context.Context, project string) (string, error
 		Path string `json:"path"`
 	}
 	if err := c.getJSON(ctx, c.endpoint(project), &info); err != nil {
-		return "", fmt.Errorf("resolve repository name: %w", err)
+		return "", actionError(fmt.Sprintf("resolve the name of repository %q", project), err, false)
 	}
 	if info.Path == "" || strings.Contains(info.Path, "/") {
-		return "", errors.New("GitLab returned an invalid repository name")
+		return "", responseError(fmt.Sprintf("resolve the name of repository %q", project), errors.New("GitLab returned an invalid repository name"))
 	}
 	return info.Path, nil
 }
@@ -103,14 +103,14 @@ func (c *Client) ResolveCommit(ctx context.Context, project, sha string) (string
 		if len(sha) < 40 && IsNotFound(err) {
 			return c.resolveCommitPrefix(ctx, project, sha)
 		}
-		return "", fmt.Errorf("resolve commit %q: %w", sha, err)
+		return "", actionError(fmt.Sprintf("resolve commit %q in repository %q", sha, project), err, false)
 	}
 	full, err := resolvedSHA(commit.ID)
 	if err != nil {
-		return "", err
+		return "", responseError(fmt.Sprintf("resolve commit %q in repository %q", sha, project), err)
 	}
 	if !strings.HasPrefix(full, strings.ToLower(sha)) {
-		return "", fmt.Errorf("GitLab resolved %q to a different commit; use a longer or full commit hash", sha)
+		return "", fmt.Errorf("GitLab resolved commit %q in repository %q to a different commit; use a longer or full commit hash", sha, project)
 	}
 	return full, nil
 }
@@ -125,7 +125,7 @@ func (c *Client) resolveCommitPrefix(ctx context.Context, project, prefix string
 	match := ""
 	for page := 1; page <= maxPages; page++ {
 		if err := ctx.Err(); err != nil {
-			return "", fmt.Errorf("resolve prefix %q: search incomplete: %w", prefix, err)
+			return "", withExplanation(actionError(fmt.Sprintf("search commits matching prefix %q in repository %q", prefix, project), err, false), "The search did not complete, so uniqueness could not be verified. Use a full commit SHA.")
 		}
 		u := c.endpoint(project, "repository", "commits")
 		query := u.Query()
@@ -135,39 +135,43 @@ func (c *Client) resolveCommitPrefix(ctx context.Context, project, prefix string
 		u.RawQuery = query.Encode()
 		var commits []commitResponse
 		if err := c.getJSON(ctx, u, &commits); err != nil {
-			return "", fmt.Errorf("resolve prefix %q: could not complete commit search; use a longer hash: %w", prefix, err)
+			return "", withExplanation(actionError(fmt.Sprintf("search commits matching prefix %q in repository %q", prefix, project), err, false), "The search did not complete, so uniqueness could not be verified. Use a full commit SHA.")
 		}
 		for _, commit := range commits {
 			full, err := resolvedSHA(commit.ID)
 			if err != nil {
-				return "", err
+				return "", responseError(fmt.Sprintf("search commits matching prefix %q in repository %q", prefix, project), err)
 			}
 			if !strings.HasPrefix(full, strings.ToLower(prefix)) {
 				continue
 			}
 			if match != "" && match != full {
-				return "", fmt.Errorf("commit prefix %q matches multiple commits; use a longer hash", prefix)
+				return "", fmt.Errorf("commit prefix %q in repository %q matches multiple commits; use a longer or full commit hash", prefix, project)
 			}
 			match = full
 		}
 		if len(commits) < pageSize {
 			if match == "" {
-				return "", fmt.Errorf("commit prefix %q was not found in GitLab's commit listing; ensure the commit is pushed to this project", prefix)
+				return "", fmt.Errorf("commit prefix %q was not found in the commit listing for repository %q; check the repository and ensure the commit is pushed and accessible", prefix, project)
 			}
 			// Verify the selected full SHA still exists before the caller can write.
 			return c.ResolveCommit(ctx, project, match)
 		}
 	}
-	return "", fmt.Errorf("commit prefix %q: search exceeded %d commits; uniqueness was not established, use a longer hash", prefix, pageSize*maxPages)
+	return "", fmt.Errorf("commit prefix %q in repository %q: search exceeded %d commits; uniqueness was not established, use a longer or full commit hash", prefix, project, pageSize*maxPages)
 }
 
 // ResolveBranch returns the current commit SHA of a branch.
 func (c *Client) ResolveBranch(ctx context.Context, project, branch string) (string, error) {
 	var ref referenceResponse
 	if err := c.getJSON(ctx, c.endpoint(project, "repository", "branches", branch), &ref); err != nil {
-		return "", fmt.Errorf("resolve branch %q: %w", branch, err)
+		return "", actionError(fmt.Sprintf("resolve branch %q in repository %q", branch, project), err, false)
 	}
-	return resolvedSHA(ref.Commit.ID)
+	sha, err := resolvedSHA(ref.Commit.ID)
+	if err != nil {
+		return "", responseError(fmt.Sprintf("resolve branch %q in repository %q", branch, project), err)
+	}
+	return sha, nil
 }
 
 // ResolveTag returns the commit SHA of a lightweight or annotated tag.
@@ -192,13 +196,14 @@ func (c *Client) ValidateBranch(ctx context.Context, project, commit, branch str
 	u.RawQuery = query.Encode()
 	var ancestor commitResponse
 	if err := c.getJSON(ctx, u, &ancestor); err != nil {
-		if IsNotFound(err) {
-			return fmt.Errorf("commit %s is not reachable from branch %q", commit, branch)
-		}
-		return fmt.Errorf("validate branch %q: %w", branch, err)
+		return actionError(fmt.Sprintf("verify that commit %q is reachable from branch %q in repository %q", commit, branch, project), err, false)
 	}
-	if !strings.EqualFold(ancestor.ID, commit) {
-		return fmt.Errorf("commit %s is not reachable from branch %q", commit, branch)
+	ancestorSHA, err := resolvedSHA(ancestor.ID)
+	if err != nil {
+		return responseError(fmt.Sprintf("verify that commit %q is reachable from branch %q in repository %q", commit, branch, project), err)
+	}
+	if !strings.EqualFold(ancestorSHA, commit) {
+		return fmt.Errorf("commit %s is not reachable from branch %q in repository %q", commit, branch, project)
 	}
 	return nil
 }
@@ -209,10 +214,10 @@ func (c *Client) ValidateBranch(ctx context.Context, project, commit, branch str
 func (c *Client) EnsureTag(ctx context.Context, project, sha, tag, message string, dryRun bool) (string, error) {
 	current, err := c.tagCommit(ctx, project, tag)
 	if err == nil {
-		return existingTagStatus(tag, sha, current)
+		return existingTagStatus(project, tag, sha, current)
 	}
 	if !IsNotFound(err) {
-		return "", err
+		return "", withExplanation(err, "Tag creation was not attempted.")
 	}
 	if dryRun {
 		return "planned", nil
@@ -234,19 +239,29 @@ func (c *Client) EnsureTag(ctx context.Context, project, sha, tag, message strin
 	// there is no ambiguous write to reconcile, and an immediate GET would ignore
 	// that response's requested quiet period.
 	rateLimited := errors.As(createErr, &responseErr) && responseErr.StatusCode == http.StatusTooManyRequests
+	var readErr error
 	if ctx.Err() == nil && !rateLimited {
-		if current, readErr := c.tagCommit(ctx, project, tag); readErr == nil {
-			return existingTagStatus(tag, sha, current)
+		current, readErr = c.tagCommit(ctx, project, tag)
+		if readErr == nil {
+			status, conflict := existingTagStatus(project, tag, sha, current)
+			if conflict != nil {
+				return "", &OperationError{Message: conflict.Error(), Cause: errors.Join(createErr, conflict)}
+			}
+			return status, nil
 		}
 	}
-	return "", fmt.Errorf("create tag %q: %w", tag, createErr)
+	failure := actionError(fmt.Sprintf("create tag %q at commit %q in repository %q", tag, sha, project), createErr, true)
+	if readErr != nil {
+		failure = &OperationError{Message: failure.Error() + " The follow-up tag lookup also failed: " + readErr.Error(), Cause: errors.Join(createErr, readErr)}
+	}
+	return "", failure
 }
 
-func existingTagStatus(tag, wanted, current string) (string, error) {
+func existingTagStatus(project, tag, wanted, current string) (string, error) {
 	if strings.EqualFold(wanted, current) {
 		return "skipped", nil
 	}
-	return "", fmt.Errorf("tag %q already points to %s, expected %s", tag, current, wanted)
+	return "", fmt.Errorf("tag %q in repository %q already points to commit %s, expected %s; the existing tag was not moved", tag, project, current, wanted)
 }
 
 // DeleteTag removes exactly the named tag, regardless of its target commit.
@@ -256,36 +271,36 @@ func existingTagStatus(tag, wanted, current string) (string, error) {
 func (c *Client) DeleteTag(ctx context.Context, project, tag string, dryRun bool) (status, commit string, err error) {
 	commit, err = c.tagCommit(ctx, project, tag)
 	if IsNotFound(err) {
-		return c.missingDeletedTag(ctx, project)
+		return c.missingDeletedTag(ctx, project, tag, false)
 	}
 	if err != nil {
-		return "", "", err
+		return "", "", withExplanation(err, "Deletion was not attempted.")
 	}
 	if dryRun {
 		return "planned", commit, nil
 	}
 	resp, err := c.request(ctx, http.MethodDelete, c.endpoint(project, "repository", "tags", tag), nil)
 	if IsNotFound(err) {
-		status, _, checkErr := c.missingDeletedTag(ctx, project)
+		status, _, checkErr := c.missingDeletedTag(ctx, project, tag, true)
 		return status, commit, checkErr
 	}
 	if err != nil {
-		return "", commit, fmt.Errorf("delete tag %q: %w", tag, err)
+		return "", commit, actionError(fmt.Sprintf("delete tag %q from repository %q", tag, project), err, true)
 	}
 	discardAndClose(resp.Body)
 	return "deleted", commit, nil
 }
 
-func (c *Client) missingDeletedTag(ctx context.Context, project string) (string, string, error) {
+func (c *Client) missingDeletedTag(ctx context.Context, project, tag string, deletionSent bool) (string, string, error) {
 	// A tag 404 can conceal a missing project or insufficient permissions.
 	var info struct {
 		ID int64 `json:"id"`
 	}
 	if err := c.getJSON(ctx, c.endpoint(project), &info); err != nil {
-		return "", "", fmt.Errorf("verify project before skipping absent tag: %w", err)
+		return "", "", missingTagVerificationError(project, tag, deletionSent, err)
 	}
 	if info.ID <= 0 {
-		return "", "", errors.New("GitLab returned an invalid project while checking an absent tag")
+		return "", "", missingTagVerificationError(project, tag, deletionSent, &responseDecodeError{cause: errors.New("GitLab returned an invalid project identifier while verifying repository access")})
 	}
 	return "skipped", "", nil
 }
@@ -303,7 +318,11 @@ func (c *Client) Archive(ctx context.Context, project, sha, path string) (io.Rea
 	u.RawQuery = query.Encode()
 	resp, err := c.request(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return nil, fmt.Errorf("download source archive: %w", err)
+		action := fmt.Sprintf("download the source archive at commit %q from repository %q", sha, project)
+		if path != "" && path != "." {
+			action += fmt.Sprintf(" for path %q", path)
+		}
+		return nil, actionError(action, err, false)
 	}
 	return resp.Body, nil
 }
@@ -311,9 +330,13 @@ func (c *Client) Archive(ctx context.Context, project, sha, path string) (io.Rea
 func (c *Client) tagCommit(ctx context.Context, project, tag string) (string, error) {
 	var ref referenceResponse
 	if err := c.getJSON(ctx, c.endpoint(project, "repository", "tags", tag), &ref); err != nil {
-		return "", fmt.Errorf("resolve tag %q: %w", tag, err)
+		return "", actionError(fmt.Sprintf("look up tag %q in repository %q", tag, project), err, false)
 	}
-	return resolvedSHA(ref.Commit.ID)
+	sha, err := resolvedSHA(ref.Commit.ID)
+	if err != nil {
+		return "", responseError(fmt.Sprintf("look up tag %q in repository %q", tag, project), err)
+	}
+	return sha, nil
 }
 
 func resolvedSHA(sha string) (string, error) {
@@ -346,7 +369,7 @@ func (c *Client) getJSON(ctx context.Context, endpoint *url.URL, value any) erro
 	}
 	defer resp.Body.Close()
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(value); err != nil {
-		return fmt.Errorf("decode GitLab response: %w", err)
+		return &responseDecodeError{cause: err}
 	}
 	return nil
 }

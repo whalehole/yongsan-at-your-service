@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -102,6 +103,14 @@ func (a *app) deleteTag(batch bool) *cobra.Command {
 					r.Error = err.Error()
 				} else {
 					r.Status = status
+					switch status {
+					case "skipped":
+						r.Message = fmt.Sprintf("Tag %q does not exist in repository %q; nothing remained to delete.", tag, p)
+					case "planned":
+						r.Message = fmt.Sprintf("Tag %q exists in repository %q; deletion was not attempted (dry run).", tag, p)
+					case "deleted":
+						r.Message = fmt.Sprintf("Tag %q was deleted from repository %q.", tag, p)
+					}
 				}
 				return r
 			}
