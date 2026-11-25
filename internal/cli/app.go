@@ -258,11 +258,13 @@ func (a *app) tagOne() *cobra.Command {
 }
 
 func (a *app) tagBatch() *cobra.Command {
+	var report batchReportOptions
 	var scope groupOptions
 	var tag, message, branch string
 	var only []string
 	var concurrency int
 	cmd := &cobra.Command{Use: "batch", Short: "Tag repositories from tagging.repositories in yas.yaml", Args: cobra.NoArgs}
+	report.bind(cmd)
 	scope.bind(cmd)
 	f := cmd.Flags()
 	f.StringVar(&branch, "branch", "", "Source branch for every selected repository (required; prompted if missing)")
@@ -271,6 +273,9 @@ func (a *app) tagBatch() *cobra.Command {
 	f.StringArrayVar(&only, "only", nil, "Select a configured project identifier (repeatable)")
 	f.IntVar(&concurrency, "concurrency", 0, "Maximum simultaneous repository jobs")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+		if err := report.validate(cmd); err != nil {
+			return usageError(err)
+		}
 		cfg, err := a.load(cmd, "tag", true)
 		if err != nil {
 			return err
@@ -336,7 +341,7 @@ func (a *app) tagBatch() *cobra.Command {
 			jobs[i] = a.tagJob(c, r)
 		}
 		timeout, _ := time.ParseDuration(cfg.Tagging.Timeout)
-		return a.execute(cmd.Context(), jobs, cfg.Tagging.Concurrency, timeout)
+		return a.executeBatch(cmd.Context(), jobs, cfg.Tagging.Concurrency, timeout, report, "tag", cfg.GitLab.URL)
 	}
 	return cmd
 }
@@ -472,6 +477,7 @@ func (a *app) buildOne() *cobra.Command {
 }
 
 func (a *app) buildBatch() *cobra.Command {
+	var report batchReportOptions
 	var tag string
 	var images []string
 	var prefixFlags imagePrefixFlags
@@ -480,6 +486,7 @@ func (a *app) buildBatch() *cobra.Command {
 	var concurrency int
 	var only []string
 	cmd := &cobra.Command{Use: "batch", Short: "Build images from building.repositories in yas.yaml", Args: cobra.NoArgs}
+	report.bind(cmd)
 	scope.bind(cmd)
 	f := cmd.Flags()
 	f.StringArrayVar(&images, "image", nil, "Override one selected image: PROJECT=NAME:TAG (repeatable)")
@@ -489,6 +496,9 @@ func (a *app) buildBatch() *cobra.Command {
 	flags.bind(cmd)
 	prefixFlags.bind(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+		if err := report.validate(cmd); err != nil {
+			return usageError(err)
+		}
 		cfg, err := a.load(cmd, "build", true)
 		if err != nil {
 			return err
@@ -569,7 +579,7 @@ func (a *app) buildBatch() *cobra.Command {
 			jobs[i] = a.buildJob(c, r)
 		}
 		timeout, _ := time.ParseDuration(cfg.Building.Timeout)
-		return a.execute(cmd.Context(), jobs, cfg.Building.Concurrency, timeout)
+		return a.executeBatch(cmd.Context(), jobs, cfg.Building.Concurrency, timeout, report, "build", cfg.GitLab.URL)
 	}
 	return cmd
 }

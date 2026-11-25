@@ -9,6 +9,7 @@ import (
 )
 
 func (a *app) deleteTag(batch bool) *cobra.Command {
+	var report batchReportOptions
 	var project, tag string
 	var scope groupOptions
 	var only []string
@@ -19,6 +20,7 @@ func (a *app) deleteTag(batch bool) *cobra.Command {
 	}
 	cmd := &cobra.Command{Use: name, Short: description, Args: cobra.NoArgs}
 	if batch {
+		report.bind(cmd)
 		scope.bind(cmd)
 	}
 	cmd.Flags().StringVar(&tag, "tag", "", "Exact Git tag name to delete (required; never inherited from config)")
@@ -29,6 +31,11 @@ func (a *app) deleteTag(batch bool) *cobra.Command {
 		cmd.Flags().StringVar(&project, "project", "", "GitLab project ID or full namespace/project path")
 	}
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+		if batch {
+			if err := report.validate(cmd); err != nil {
+				return usageError(err)
+			}
+		}
 		cfg, err := a.load(cmd, "tag", batch)
 		if err != nil {
 			return err
@@ -103,6 +110,7 @@ func (a *app) deleteTag(batch bool) *cobra.Command {
 		workers := 1
 		if batch {
 			workers = cfg.Tagging.Concurrency
+			return a.executeBatch(cmd.Context(), jobs, workers, timeout, report, "tag-delete", cfg.GitLab.URL)
 		}
 		return a.execute(cmd.Context(), jobs, workers, timeout)
 	}

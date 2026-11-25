@@ -517,6 +517,8 @@ The `one` commands use the shared connection settings, operation timeouts, appli
 | `--non-interactive` | Error on missing required inputs instead of prompting |
 | `--concurrency N` | Batch commands only; maximum simultaneous repository jobs |
 | `--only PROJECT` | Batch commands only; repeatable selection from that operation's configured list |
+| `--report PATH` | Batch commands only; save the HTML report to a new `.html` file at this path |
+| `--no-report` | Batch commands only; disable the automatic saved report |
 
 Run `yas tag one --help`, `yas tag batch --help`, `yas build one --help`, or `yas build batch --help` for command-specific flags. Configuration commands validate or write the fixed file; connection overrides and execution flags are intended for tagging/build operations.
 
@@ -546,6 +548,34 @@ yas build batch --tag v1.2.0 --format json > results.json
 ```
 
 The final result table/JSON remains in configuration order; live progress follows actual execution order.
+
+## Batch reports
+
+`yas tag batch`, `yas tag delete batch`, and `yas build batch` automatically save a standalone HTML report in `./reports/`, including when selected repository jobs fail or the run is canceled. Each default filename contains the operation, a timestamp, and a unique suffix. Open the file in a browser to read, share, or print/save it as a PDF; it needs no internet connection or additional software to render beyond the browser. Single-repository commands do not create reports.
+
+Each report includes:
+
+- The operation, application version, GitLab server, and execution or dry-run mode.
+- Start and finish timestamps with time zones, total elapsed time, concurrency, and the per-job timeout.
+- Total, passed, failed, skipped, and planned counts.
+- One row per selected repository job in configuration order, showing its outcome, exact status, source reference, resolved commit SHA when available, destination tag or image, duration, and failure details.
+
+`created`, `deleted`, and `built` count as **passed**. `skipped` and `planned` remain separate: a skipped job made no change, and a planned dry-run job did not execute the operation. Dry-run reports describe the checks performed and do not prove that a later build or tag write will succeed. Reports contain result details rather than raw Docker logs, configuration contents, environment variables, command-line arguments, or build arguments.
+
+```bash
+# Save automatically in ./reports/:
+yas build batch --tag v1.2.0
+# Choose a new report file; missing parent directories are created:
+yas tag batch --branch release/1.2 --report reports/release-1.2.html
+# Keep JSON stdout for scripts while also saving the HTML report:
+yas build batch --tag v1.2.0 --format json > results.json
+# Disable the saved report for this invocation:
+yas tag delete batch --tag old-release --no-report
+```
+
+`--report` accepts an absolute path or a path relative to the current working directory and requires a `.html` extension. Existing files are never overwritten. `--report` and `--no-report` cannot be used together when reporting is disabled. The saved report path is printed to stderr, including with `--no-progress`, so text/JSON stdout retains its existing format.
+
+The report destination is reserved before jobs run; an unavailable destination stops execution before any repository operation starts. Configuration, validation, or prompt errors before execution do not create reports. Once jobs run, their results are saved before terminal output or the final failure is returned. A report-writing failure returns exit code `1` even if the repository operations succeeded; completed operations are not rolled back.
 
 ## Dry runs, results, and failures
 

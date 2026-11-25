@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,7 +14,11 @@ import (
 
 func (a *app) tagJob(c *gitlab.Client, repo config.TagRepository) job {
 	return func(ctx context.Context) result {
-		r := result{Project: repo.Project, Operation: "tag", Tag: repo.Tag, Status: "failed"}
+		reference := repo.Commit
+		if reference == "" {
+			reference = repo.Branch
+		}
+		r := result{Project: repo.Project, Operation: "tag", Reference: reference, Tag: repo.Tag, Status: "failed"}
 		progress(ctx, r, "resolving source commit")
 		if err := ctx.Err(); err != nil {
 			r.Error = err.Error()
@@ -22,10 +27,8 @@ func (a *app) tagJob(c *gitlab.Client, repo config.TagRepository) job {
 		var sha string
 		var err error
 		if repo.Commit != "" {
-			r.Reference = repo.Commit
 			sha, err = c.ResolveCommit(ctx, repo.Project, repo.Commit)
 		} else {
-			r.Reference = repo.Branch
 			sha, err = c.ResolveBranch(ctx, repo.Project, repo.Branch)
 		}
 		if err != nil {
@@ -58,7 +61,11 @@ func boolValue(value *bool) bool { return value != nil && *value }
 
 func (a *app) buildJob(c *gitlab.Client, repo config.BuildRepository) job {
 	return func(ctx context.Context) result {
-		r := result{Project: repo.Project, Operation: "build", Image: repo.Image, Status: "failed"}
+		reference := repo.Source.Commit
+		if reference == "" {
+			reference = repo.Source.Tag
+		}
+		r := result{Project: repo.Project, Operation: "build", Reference: reference, Image: repo.Image, Status: "failed"}
 		progress(ctx, r, "resolving source commit")
 		if err := ctx.Err(); err != nil {
 			r.Error = err.Error()
@@ -67,10 +74,8 @@ func (a *app) buildJob(c *gitlab.Client, repo config.BuildRepository) job {
 		var sha string
 		var err error
 		if repo.Source.Commit != "" {
-			r.Reference = repo.Source.Commit
 			sha, err = c.ResolveCommit(ctx, repo.Project, repo.Source.Commit)
 		} else {
-			r.Reference = repo.Source.Tag
 			sha, err = c.ResolveTag(ctx, repo.Project, repo.Source.Tag)
 		}
 		if err != nil {
@@ -138,28 +143,49 @@ func (a *app) buildJob(c *gitlab.Client, repo config.BuildRepository) job {
 }
 
 func (a *app) execute(ctx context.Context, jobs []job, concurrency int, timeout time.Duration) error {
+	return a.executeWithReport(ctx, jobs, concurrency, timeout, nil)
+}
+
+func (a *app) executeWithReport(ctx context.Context, jobs []job, concurrency int, timeout time.Duration, report *batchReportRun) error {
 	a.logMu.Lock()
 	a.buildTargets = map[string]bool{}
 	a.logMu.Unlock()
 	if concurrency > len(jobs) {
 		concurrency = len(jobs)
 	}
+	if concurrency < 1 && len(jobs) > 0 {
+		concurrency = 1
+	}
+	if report != nil {
+		report.data.StartedAt = time.Now()
+		report.data.Concurrency = concurrency
+	}
 	jobs, progressError := a.progressJobs(jobs, concurrency)
 	results := runJobs(ctx, jobs, concurrency, timeout)
-	if err := writeResults(a.options.Out, a.format, results); err != nil {
-		return operationError(err)
+	var reportErr error
+	if report != nil {
+		report.data.FinishedAt = time.Now()
+		report.data.Canceled = ctx.Err() != nil
+		report.data.Results = results
+		reportErr = report.save()
+		if reportErr == nil {
+			_, reportErr = fmt.Fprintf(a.options.Err, "Batch report: %s\n", report.path)
+		}
 	}
-	if err := progressError(); err != nil {
-		return operationError(err)
-	}
+	outputErr := writeResults(a.options.Out, a.format, results)
+	progressErr := progressError()
 	failures := 0
 	for _, r := range results {
 		if r.Status == "failed" {
 			failures++
 		}
 	}
+	var failureErr error
 	if failures > 0 {
-		return operationError(fmt.Errorf("%d repository operation(s) failed", failures))
+		failureErr = fmt.Errorf("%d repository operation(s) failed", failures)
+	}
+	if err := errors.Join(failureErr, reportErr, outputErr, progressErr); err != nil {
+		return operationError(err)
 	}
 	return nil
 }
