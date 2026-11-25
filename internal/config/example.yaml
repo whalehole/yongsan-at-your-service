@@ -1,0 +1,47 @@
+# yas always reads yas.yaml from the current working directory.
+# Replace the example GitLab projects and image names before running jobs.
+version: 1
+
+gitlab:
+  url: https://gitlab.com
+  # Paste your GitLab access token here. Keep yas.yaml out of version control.
+  token: ""
+  # Optional groups offered by the interactive single-repository flows.
+  # Leave empty to enter full project paths directly. A Skip choice is always offered.
+  groups: []
+  # groups:
+  #   - my-group
+  #   - my-group/subgroup
+  # Alternatively, leave token empty and set this environment variable.
+  # token_env: GITLAB_TOKEN
+
+# This list is independent of building.repositories.
+# Choose the shared branch at runtime: yas tag batch --branch release/1.2
+# Or run yas tag batch interactively and enter the branch once.
+tagging:
+  concurrency: 8
+  timeout: 2m
+  repositories:
+    - project: my-group/service-a
+    - project: my-group/subgroup/service-b
+      message: Hotfix release
+      # To select an older commit, add its hexadecimal SHA (full or at least 7 characters):
+      # commit: 0123456789abcdef0123456789abcdef01234567
+      # A pinned commit must belong to the branch selected when running the batch.
+
+building:
+  # Optional output image prefixes. An interactive Skip choice is always offered.
+  image_prefixes: []
+  # image_prefixes:
+  #   - registry.gitlab.stelabs.com/registry/container-images
+  concurrency: 2
+  timeout: 30m
+  defaults:
+    # Relative to the selected context, not the repository root.
+    dockerfile: Dockerfile
+    no_cache: false
+    pull: false
+  # image is optional: defaults to repository-name:source-tag (or resolved commit SHA).
+  repositories:
+    - project: my-group/service-a
+    - project: my-group/subgroup/service-c
