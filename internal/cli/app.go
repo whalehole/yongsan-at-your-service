@@ -81,8 +81,8 @@ func New(options Options) *cobra.Command {
 		interactive: func() bool { return options.Interactive && !a.nonInteractive },
 	}
 	root := &cobra.Command{
-		Use: "yas", Short: "Concurrent GitLab tagging and Docker builds",
-		Long: "Tag GitLab repositories and build Docker images from exact revisions.\nOperation commands always load yas.yaml from the current working directory.",
+		Use: "yas", Short: "Concurrent GitLab tagging, Docker builds, and release scans",
+		Long: "Tag GitLab repositories, build Docker images, and collect release commits from exact revisions.\nOperation commands always load yas.yaml from the current working directory.",
 		Args: cobra.NoArgs, SilenceErrors: true, SilenceUsage: true,
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 	}
@@ -104,11 +104,14 @@ func New(options Options) *cobra.Command {
 	tagOne, tagBatch := a.tagOne(), a.tagBatch()
 	buildOne, buildBatch := a.buildOne(), a.buildBatch()
 	deleteOne, deleteBatch := a.deleteTag(false), a.deleteTag(true)
+	releaseScan := a.releaseScan()
+	releaseCmd := &cobra.Command{Use: "release", Short: "Generate draft release notes from GitLab commits", Args: cobra.NoArgs}
+	releaseCmd.AddCommand(releaseScan)
 	deleteCmd := &cobra.Command{Use: "delete", Short: "Delete a named Git tag", Args: cobra.NoArgs}
 	deleteCmd.AddCommand(deleteOne, deleteBatch)
 	tag.AddCommand(tagOne, tagBatch, deleteCmd)
 	build.AddCommand(buildOne, buildBatch)
-	root.AddCommand(tag, build, a.configCommand())
+	root.AddCommand(tag, build, releaseCmd, a.configCommand())
 	root.AddCommand(&cobra.Command{
 		Use: "version", Short: "Print the application version", Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -127,11 +130,12 @@ func New(options Options) *cobra.Command {
 		index, err := a.prompt.choose(cmd.Context(), "Choose an operation:", []string{
 			"Tag one repository", "Tag repositories from config", "Build one Docker image", "Build Docker images from config",
 			"Delete a tag from one repository", "Delete a tag from tagging repositories",
+			"Scan release changes into YAML",
 		})
 		if err != nil {
 			return usageError(err)
 		}
-		selected := []*cobra.Command{tagOne, tagBatch, buildOne, buildBatch, deleteOne, deleteBatch}[index]
+		selected := []*cobra.Command{tagOne, tagBatch, buildOne, buildBatch, deleteOne, deleteBatch, releaseScan}[index]
 		selected.SetContext(cmd.Context())
 		return selected.RunE(selected, nil)
 	}

@@ -15,7 +15,7 @@ gitlab:
   # Alternatively, leave token empty and set this environment variable.
   # token_env: GITLAB_TOKEN
 
-# This list is independent of building.repositories.
+# This list is independent of building.repositories and release.repositories.
 # Choose the shared branch at runtime: yas tag batch --branch release/1.2
 # Or run yas tag batch interactively and enter the branch once.
 tagging:
@@ -45,3 +45,12 @@ building:
   repositories:
     - project: my-group/service-a
     - project: my-group/subgroup/service-c
+
+# Release scans use this independent list, never tagging.repositories or building.repositories.
+# Group selection uses the namespace prefixes in these project paths.
+release:
+  concurrency: 8
+  timeout: 2m
+  repositories:
+    - project: my-group/service-a
+    - project: my-group/subgroup/service-d

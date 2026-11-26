@@ -28,6 +28,7 @@ type Config struct {
 	GitLab   GitLabConfig   `yaml:"gitlab"`
 	Tagging  TaggingConfig  `yaml:"tagging"`
 	Building BuildingConfig `yaml:"building"`
+	Release  ReleaseConfig  `yaml:"release"`
 }
 
 type GitLabConfig struct {
@@ -55,6 +56,16 @@ type TagRepository struct {
 	Commit  string `yaml:"commit"`
 	Tag     string `yaml:"tag"`
 	Message string `yaml:"message"`
+}
+
+type ReleaseConfig struct {
+	Concurrency  int                 `yaml:"concurrency"`
+	Timeout      string              `yaml:"timeout"`
+	Repositories []ReleaseRepository `yaml:"repositories"`
+}
+
+type ReleaseRepository struct {
+	Project string `yaml:"project"`
 }
 
 type BuildingConfig struct {
@@ -112,6 +123,7 @@ func Parse(r io.Reader) (*Config, error) {
 	c := &Config{
 		GitLab:  GitLabConfig{URL: "https://gitlab.com", TokenEnv: "GITLAB_TOKEN"},
 		Tagging: TaggingConfig{Concurrency: 8, Timeout: "2m"},
+		Release: ReleaseConfig{Concurrency: 8, Timeout: "2m"},
 		Building: BuildingConfig{
 			Concurrency: 2,
 			Timeout:     "30m",
@@ -150,7 +162,10 @@ func (c *Config) Validate() error {
 	if err := c.ValidateTagging(); err != nil {
 		return err
 	}
-	return c.ValidateBuilding()
+	if err := c.ValidateBuilding(); err != nil {
+		return err
+	}
+	return c.ValidateRelease()
 }
 
 func (c *Config) ValidateCommon() error {
@@ -234,6 +249,23 @@ func (c *Config) ValidateBuilding() error {
 			return fmt.Errorf("building.repositories[%d]: duplicate output image %s", i, entry.Image)
 		}
 		seen[entry.Image] = true
+	}
+	return nil
+}
+
+func (c *Config) ValidateRelease() error {
+	if err := validateExecution(c.Release.Concurrency, c.Release.Timeout); err != nil {
+		return fmt.Errorf("release: %w", err)
+	}
+	seen := make(map[string]bool)
+	for i, entry := range c.Release.Repositories {
+		if err := ValidateProject(entry.Project); err != nil {
+			return fmt.Errorf("release.repositories[%d]: %w", i, err)
+		}
+		if seen[entry.Project] {
+			return fmt.Errorf("release.repositories[%d]: duplicate project %s", i, entry.Project)
+		}
+		seen[entry.Project] = true
 	}
 	return nil
 }

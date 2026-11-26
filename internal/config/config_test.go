@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -22,7 +23,7 @@ func TestDefaultsAndEmptyOperationLists(t *testing.T) {
 	if c.GitLab.URL != "https://gitlab.com" || c.GitLab.TokenEnv != "GITLAB_TOKEN" {
 		t.Fatalf("unexpected GitLab defaults: %+v", c.GitLab)
 	}
-	if c.Tagging.Concurrency != 8 || c.Tagging.Timeout != "2m" || c.Building.Concurrency != 2 || c.Building.Timeout != "30m" {
+	if c.Tagging.Concurrency != 8 || c.Tagging.Timeout != "2m" || c.Building.Concurrency != 2 || c.Building.Timeout != "30m" || c.Release.Concurrency != 8 || c.Release.Timeout != "2m" {
 		t.Fatalf("unexpected execution defaults: %+v", c)
 	}
 	if c.Building.Defaults.Context != "." || c.Building.Defaults.Dockerfile != "Dockerfile" || c.Building.Defaults.NoCache == nil || *c.Building.Defaults.NoCache {
@@ -35,7 +36,7 @@ func TestExampleValidates(t *testing.T) {
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if len(c.Tagging.Repositories) != 2 || len(c.Building.Repositories) != 2 {
+	if len(c.Tagging.Repositories) != 2 || len(c.Building.Repositories) != 2 || len(c.Release.Repositories) != 2 {
 		t.Fatal("example should demonstrate independent repository lists")
 	}
 }
@@ -86,15 +87,17 @@ func TestDirectTokenConfiguration(t *testing.T) {
 
 func TestStrictYAML(t *testing.T) {
 	for name, input := range map[string]string{
-		"empty":              "",
-		"empty document":     "---\n",
-		"null":               "null\n",
-		"unknown root":       "version: 1\nunexpected: true\n",
-		"unknown nested":     "version: 1\nbuilding:\n  defaults:\n    docker_file: Dockerfile\n",
-		"unknown entry":      "version: 1\ntagging:\n  repositories:\n    - project: group/project\n      typo: true\n",
-		"multiple documents": "version: 1\n---\nversion: 1\n",
-		"duplicate fields":   "version: 1\nversion: 2\n",
-		"malformed":          "version: [\n",
+		"empty":                 "",
+		"empty document":        "---\n",
+		"null":                  "null\n",
+		"unknown root":          "version: 1\nunexpected: true\n",
+		"unknown nested":        "version: 1\nbuilding:\n  defaults:\n    docker_file: Dockerfile\n",
+		"unknown entry":         "version: 1\ntagging:\n  repositories:\n    - project: group/project\n      typo: true\n",
+		"unknown release field": "version: 1\nrelease:\n  defaults: {}\n",
+		"unknown release entry": "version: 1\nrelease:\n  repositories:\n    - project: group/project\n      branch: main\n",
+		"multiple documents":    "version: 1\n---\nversion: 1\n",
+		"duplicate fields":      "version: 1\nversion: 2\n",
+		"malformed":             "version: [\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Parse(strings.NewReader(input)); err == nil {
@@ -298,5 +301,99 @@ func TestBuildSourceAndOptionsValidation(t *testing.T) {
 				t.Fatal("expected validation failure")
 			}
 		})
+	}
+}
+
+func TestReleaseConfigurationIsIndependent(t *testing.T) {
+	c := mustParse(t, `version: 1
+tagging:
+  repositories:
+    - project: tag-group/tag-only
+building:
+  repositories:
+    - project: build-group/build-only
+release:
+  concurrency: 4
+  timeout: 45s
+  repositories:
+    - project: release-group/service
+    - project: 12345
+`)
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if c.Release.Concurrency != 4 || c.Release.Timeout != "45s" || len(c.Release.Repositories) != 2 || c.Release.Repositories[0].Project != "release-group/service" || c.Release.Repositories[1].Project != "12345" {
+		t.Fatalf("release configuration was not preserved independently: %+v", c.Release)
+	}
+	c.Tagging.Concurrency = 0
+	c.Building.Defaults.Context = "../invalid"
+	if err := c.ValidateRelease(); err != nil {
+		t.Fatalf("release validation depends on tagging/building settings: %v", err)
+	}
+}
+
+func TestReleaseOnlyConfigurationAndLegacyCompatibility(t *testing.T) {
+	for _, input := range []string{
+		"version: 1\n",
+		"version: 1\ntagging:\n  repositories:\n    - project: group/tag-only\nbuilding:\n  repositories:\n    - project: group/build-only\n",
+	} {
+		c := mustParse(t, input)
+		if err := c.Validate(); err != nil {
+			t.Fatalf("legacy configuration rejected: %v", err)
+		}
+		if c.Release.Concurrency != 8 || c.Release.Timeout != "2m" || len(c.Release.Repositories) != 0 {
+			t.Fatalf("release inherited legacy operation repositories: %+v", c.Release)
+		}
+	}
+	c := mustParse(t, "version: 1\nrelease:\n  repositories:\n    - project: release-group/service\n")
+	if err := c.Validate(); err != nil || len(c.Tagging.Repositories) != 0 || len(c.Building.Repositories) != 0 || len(c.Release.Repositories) != 1 {
+		t.Fatalf("release-only configuration rejected or linked to other operations: %+v; %v", c, err)
+	}
+	c.Release.Repositories = nil
+	if err := c.ValidateRelease(); err != nil {
+		t.Fatalf("empty release list must be valid until a scan is requested: %v", err)
+	}
+}
+
+func TestReleaseValidationRejectsInvalidSettingsAndProjects(t *testing.T) {
+	for name, content := range map[string]string{
+		"zero concurrency":     "  concurrency: 0\n",
+		"negative concurrency": "  concurrency: -1\n",
+		"zero timeout":         "  timeout: 0s\n",
+		"negative timeout":     "  timeout: -1m\n",
+		"invalid timeout":      "  timeout: tomorrow\n",
+		"empty project":        "  repositories:\n    - project: ''\n",
+		"invalid project":      "  repositories:\n    - project: ../service\n",
+		"duplicate project":    "  repositories:\n    - project: group/service\n    - project: group/service\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := mustParse(t, "version: 1\nrelease:\n"+content)
+			if err := c.ValidateRelease(); err == nil || !strings.Contains(err.Error(), "release") {
+				t.Fatalf("invalid release configuration accepted: %v", err)
+			}
+			if err := c.Validate(); err == nil {
+				t.Fatal("global validation ignored release configuration")
+			}
+			if err := c.ValidateTagging(); err != nil {
+				t.Fatalf("tagging validation depends on release settings: %v", err)
+			}
+			if err := c.ValidateBuilding(); err != nil {
+				t.Fatalf("building validation depends on release settings: %v", err)
+			}
+		})
+	}
+}
+
+func TestExampleConfigurationMirrorsEmbeddedStarter(t *testing.T) {
+	data, err := os.ReadFile("../../yas.example.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != Example {
+		t.Fatal("yas.example.yaml and the embedded config init starter differ")
+	}
+	c := mustParse(t, string(data))
+	if err := c.ValidateRelease(); err != nil || len(c.Release.Repositories) != 2 {
+		t.Fatalf("release example invalid: %+v; %v", c.Release, err)
 	}
 }

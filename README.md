@@ -102,6 +102,7 @@ yas tag batch --branch release/1.2
 | `yas tag batch` | Tag selected entries from `tagging.repositories` |
 | `yas build one` | Build one image from a commit or Git tag |
 | `yas build batch` | Build selected entries from `building.repositories` |
+| `yas release scan` | Collect new release commits across selected repositories and write an editable YAML draft |
 | `yas config init` | Create the example `yas.yaml` without overwriting a file |
 | `yas config validate` | Validate the entire configuration locally |
 | `yas help [command]` | Display help, such as `yas help tag one` |
@@ -459,6 +460,75 @@ Source/archive limitations:
 
 GitLab imposes archive and API rate limits. Concurrency is a maximum number of active jobs, not a guarantee of request throughput. Read requests retry transient connection failures and selected temporary HTTP errors, including `429`, while respecting `Retry-After` and the job deadline. See [GitLab source archives](https://docs.gitlab.com/api/repositories/#retrieve-file-archive-from-a-repository).
 
+## Scan changes for release notes
+
+`yas release scan` reads `release.repositories` in `yas.yaml`, collects commits reachable from the target release that are absent from the baseline history, and writes an editable YAML release-notes draft for human completion. It makes no Git changes, creates no tags, and does not invoke Docker.
+
+Configure the components to include in release notes:
+
+```yaml
+release:
+  concurrency: 8
+  timeout: 2m
+  repositories:
+    - project: my-group/service-a
+    - project: my-group/service-b
+    - project: my-group/subgroup/service-c
+```
+
+This list is required for release scanning and is independent of the other operation settings. An omitted or empty `release.repositories` produces a clear error; there is no repository-list selection prompt or fallback to another list.
+
+```bash
+# Collect commits added since the baseline release tag:
+yas release scan --from 2.2.7 --to 2.2.8 --output drafts/release-2.2.8.yaml
+# Detect each repository's previous stable version automatically:
+yas release scan --to 2.2.8 --previous --group my-group
+# Select an individual configured component:
+yas release scan --only my-group/service-a --from 2.2.7 --to 2.2.8
+# Draft an untagged release from the current branch tip:
+yas release scan --from 2.2.7 --to-branch release/2.2 --version 2.2.8 --output drafts/release-2.2.8.yaml
+```
+
+Choose exactly one target: `--to TAG`, `--to-branch BRANCH`, or `--to-commit SHA`. An explicit `--from TAG` selects the baseline release tag. `--from` and `--previous` are mutually exclusive. `--version` sets the draft's release label without changing the scanned revisions; by default the label comes from the target tag, branch, or commit. Branch and commit targets support drafts before a release tag exists and require an explicit `--from`.
+
+With `--previous`, the target must be an existing stable semantic-version tag such as `2.2.8` or `v2.2.8`. Each repository independently selects its greatest existing lower stable version in the same major/minor series. A previous `2.2.7` can be selected for `2.2.8`; `2.1.9`, `2.3.0`, and prerelease tags are excluded. Optional `v` prefixes are supported. Missing previous versions or ambiguous tags for the same version fail that component rather than guessing.
+
+`--group`, `--all-groups`, and repeatable `--only PROJECT` select components from `release.repositories`. Interactive group choices come from those project paths. A group matches the exact full namespace, excluding nested subgroups and similarly named groups. Selection happens before GitLab requests, so unselected repositories are not scanned. `--concurrency` and `--timeout` override `release.concurrency` and `release.timeout`, which default to `8` and `2m`.
+
+In an interactive terminal, omitted source and output choices are prompted for after repository selection. The root `yas` operation menu also offers release scanning. Non-interactive scans require a target and either `--from` or `--previous`. The default output is `release-notes-<version>.yaml`; `--output` accepts a new `.yaml` or `.yml` path and creates missing parent directories. Existing files are never overwritten, and the destination is reserved before scanning. The file uses permissions `0600`.
+
+The YAML document contains:
+
+- `schema_version` and editable `release` metadata, including a blank summary and `draft: true`.
+- `scan` timestamps, execution settings, and changed/unchanged/failed totals.
+- Ordered `components` with baseline/target references, their resolved full commit SHAs, status, and any error.
+- One editable `commits` list per component, initialized with the original commit titles/messages, authors, full SHAs, and links.
+- Empty `upgrade_notes` and `known_issues` sections for editorial input.
+
+Every `components[].commits[]` entry includes optional numeric identifiers for manual completion:
+
+```yaml
+change_request: null
+incident: null
+```
+
+`null` means no linked record. Edit either field when relevant, for example:
+
+```yaml
+change_request: 256
+incident: 128
+```
+
+These identifiers are not fetched or inferred automatically.
+
+Review and complete release information directly under `commits`, keeping each commit's SHA and link for provenance. Add the release summary, upgrade instructions, and known issues before publishing.
+
+References are resolved once per component, then GitLab's paginated commit listing is read for the pinned `BASELINE_SHA..TARGET_SHA` range. Every page is collected before a successful result is reported. A component is `changed` when this range contains new commits and `unchanged` when it contains none, even if the endpoint SHAs differ. This scan retrieves commit metadata and does not request file diffs.
+
+A missing/inaccessible tag, denied request, timed-out listing, or incomplete pagination is a failed component. Successful and failed components are both saved in the YAML draft in selected configuration order; any component failure returns exit code `1`. Validation errors before scanning do not create a draft.
+
+`--format text|json` controls the terminal summary; JSON stdout is an array of component results. The YAML output path is announced on stderr, including with `--no-progress`. Release scans do not create the batch HTML operation report. `--dry-run` is rejected because scanning already performs read-only GitLab requests and writes the requested draft.
+
 ## YAML configuration
 
 ```yaml
@@ -486,9 +556,16 @@ building:
   repositories:
     - project: my-group/service-a
     - project: my-group/subgroup/service-c
+
+release:
+  concurrency: 8
+  timeout: 2m
+  repositories:
+    - project: my-group/service-a
+    - project: my-group/service-d
 ```
 
-Replace the illustrative commit above with a real full SHA. The lists are independent: this example tags services A and B but builds services A and C. Either list may be empty for a configuration used only by the other operation; running a batch against an empty list fails clearly.
+The lists are independent: this example tags services A and B, builds services A and C, and scans release changes for services A and D. Lists for unused operations may be empty. Running an operation with an empty applicable repository list fails clearly.
 
 ### Fields and defaults
 
@@ -518,6 +595,9 @@ Replace the illustrative commit above with a real full SHA. The lists are indepe
 | `building.repositories[].project` | Required project ID or full namespace/project path |
 | `building.repositories[].source` | Not needed; legacy values are superseded by the required runtime batch tag |
 | Build options on a repository entry | Override corresponding build defaults |
+| `release.concurrency` | `8`; must be positive |
+| `release.timeout` | `2m`; positive time limit for each component scan |
+| `release.repositories[].project` | Required project ID or full namespace/project path for release scanning |
 
 YAML fields are checked strictly: unknown fields, duplicate YAML keys, and multiple documents are errors. Commit hashes must be hexadecimal (7–40 characters, or a full 64-character SHA), and references, image names, paths, and build-argument names are validated. Duplicate tagging destinations for the same configured project/tag and duplicate output image names are rejected before execution.
 
@@ -552,12 +632,12 @@ The `one` commands use the shared connection settings, operation timeouts, appli
 | `--format text\|json` | Operation result format; default `text` |
 | `--no-progress` | Hide live operation progress; Docker logs and final results remain |
 | `--non-interactive` | Error on missing required inputs instead of prompting |
-| `--concurrency N` | Batch commands only; maximum simultaneous repository jobs |
-| `--only PROJECT` | Batch commands only; repeatable selection from that operation's configured list |
+| `--concurrency N` | Batch commands and release scans; maximum simultaneous repository jobs |
+| `--only PROJECT` | Batch commands and release scans; repeatable selection from that operation's configured list |
 | `--report PATH` | Batch commands only; save the HTML report to a new `.html` file at this path |
 | `--no-report` | Batch commands only; disable the automatic saved report |
 
-Run `yas tag one --help`, `yas tag batch --help`, `yas build one --help`, or `yas build batch --help` for command-specific flags. Configuration commands validate or write the fixed file; connection overrides and execution flags are intended for tagging/build operations.
+Run `yas tag one --help`, `yas tag batch --help`, `yas build one --help`, `yas build batch --help`, or `yas release scan --help` for command-specific flags. Configuration commands validate or write the fixed file; connection overrides and execution flags apply to their respective operation commands.
 
 ## Live progress
 
