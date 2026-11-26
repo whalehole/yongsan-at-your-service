@@ -32,10 +32,11 @@ type Config struct {
 }
 
 type GitLabConfig struct {
-	URL      string   `yaml:"url"`
-	Token    string   `yaml:"token"`
-	TokenEnv string   `yaml:"token_env"`
-	Groups   []string `yaml:"groups"`
+	URL                string   `yaml:"url"`
+	Token              string   `yaml:"token"`
+	TokenEnv           string   `yaml:"token_env"`
+	Groups             []string `yaml:"groups"`
+	InsecureSkipVerify bool     `yaml:"insecure_skip_verify"`
 }
 
 type TaggingConfig struct {

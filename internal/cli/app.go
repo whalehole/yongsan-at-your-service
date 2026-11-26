@@ -193,7 +193,9 @@ func clientFor(cfg *config.Config) (*gitlab.Client, error) {
 	if strings.TrimSpace(token) == "" {
 		return nil, usageError(fmt.Errorf("set gitlab.token in yas.yaml or set the %s environment variable to a GitLab access token", cfg.GitLab.TokenEnv))
 	}
-	c, err := gitlab.New(cfg.GitLab.URL, token)
+	c, err := gitlab.NewWithOptions(cfg.GitLab.URL, token, gitlab.Options{
+		InsecureSkipVerify: cfg.GitLab.InsecureSkipVerify,
+	})
 	if err != nil {
 		return nil, usageError(err)
 	}

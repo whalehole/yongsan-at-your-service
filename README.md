@@ -91,6 +91,16 @@ yas tag batch --branch release/1.2
 
 `--gitlab-url` overrides the server URL. An explicit `--token-env NAME` selects environment authentication for that invocation, overriding a configured token. The URL can include a GitLab deployment prefix. Keep credentials out of the URL.
 
+To skip certificate verification for a self-managed GitLab server, add this option to your existing `gitlab` block:
+
+```yaml
+gitlab:
+  url: https://gitlab.stelabs.com
+  insecure_skip_verify: true
+```
+
+`gitlab.insecure_skip_verify` defaults to `false`. Enabling it leaves the server's identity unchecked and can expose your access token to an impersonating server. The option applies to the application's GitLab HTTPS requests.
+
 ## Commands and interactive input
 
 | Command | Purpose |
@@ -573,6 +583,7 @@ The lists are independent: this example tags services A and B, builds services A
 | --- | --- |
 | `version` | Required; must be `1` |
 | `gitlab.url` | `https://gitlab.com` |
+| `gitlab.insecure_skip_verify` | `false`; enable explicitly to skip GitLab TLS certificate verification |
 | `gitlab.token` | Optional access token stored directly in the config; takes precedence over environment authentication |
 | `gitlab.groups` | Optional list of group/subgroup paths for interactive single-repository selection; defaults to an empty list |
 | `gitlab.token_env` | `GITLAB_TOKEN`; used when `token` is empty or `--token-env` is supplied |

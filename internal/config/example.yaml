@@ -4,6 +4,8 @@ version: 1
 
 gitlab:
   url: https://gitlab.com
+  # True skips TLS server identity checks and can expose your token to impersonation.
+  insecure_skip_verify: false
   # Paste your GitLab access token here. Keep yas.yaml out of version control.
   token: ""
   # Optional groups offered by the interactive single-repository flows.

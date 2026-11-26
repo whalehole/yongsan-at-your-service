@@ -20,7 +20,7 @@ func TestDefaultsAndEmptyOperationLists(t *testing.T) {
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if c.GitLab.URL != "https://gitlab.com" || c.GitLab.TokenEnv != "GITLAB_TOKEN" {
+	if c.GitLab.URL != "https://gitlab.com" || c.GitLab.TokenEnv != "GITLAB_TOKEN" || c.GitLab.InsecureSkipVerify {
 		t.Fatalf("unexpected GitLab defaults: %+v", c.GitLab)
 	}
 	if c.Tagging.Concurrency != 8 || c.Tagging.Timeout != "2m" || c.Building.Concurrency != 2 || c.Building.Timeout != "30m" || c.Release.Concurrency != 8 || c.Release.Timeout != "2m" {
@@ -82,6 +82,38 @@ func TestDirectTokenConfiguration(t *testing.T) {
 	c.GitLab.Token = "invalid\nvalue"
 	if err := c.ValidateCommon(); err == nil {
 		t.Fatal("newline in token was accepted")
+	}
+}
+
+func TestGitLabTLSVerificationIsSkippedOnlyWhenConfigured(t *testing.T) {
+	for _, tc := range []struct {
+		name, setting string
+		want          bool
+	}{
+		{name: "omitted"},
+		{name: "explicit false", setting: "  insecure_skip_verify: false\n"},
+		{name: "explicit true", setting: "  insecure_skip_verify: true\n", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := mustParse(t, "version: 1\ngitlab:\n  url: https://gitlab.example.com\n"+tc.setting)
+			if err := c.ValidateCommon(); err != nil {
+				t.Fatal(err)
+			}
+			if c.GitLab.InsecureSkipVerify != tc.want {
+				t.Fatalf("insecure_skip_verify=%v want=%v", c.GitLab.InsecureSkipVerify, tc.want)
+			}
+		})
+	}
+}
+
+func TestGitLabTLSVerificationSettingRejectsNonBooleanValues(t *testing.T) {
+	for _, value := range []string{"1", "enabled", "[true]", "{enabled: true}"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := Parse(strings.NewReader("version: 1\ngitlab:\n  insecure_skip_verify: " + value + "\n"))
+			if err == nil {
+				t.Fatal("non-boolean insecure_skip_verify value was accepted")
+			}
+		})
 	}
 }
 

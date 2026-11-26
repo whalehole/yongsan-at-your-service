@@ -47,6 +47,11 @@ func IsNotFound(err error) bool {
 // New accepts a GitLab installation URL, optionally including its deployment
 // prefix or /api/v4 suffix. Credentials must be supplied separately from the URL.
 func New(baseURL, token string) (*Client, error) {
+	return NewWithOptions(baseURL, token, Options{})
+}
+
+// NewWithOptions configures TLS verification for this GitLab client only.
+func NewWithOptions(baseURL, token string, options Options) (*Client, error) {
 	u, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, errors.New("invalid GitLab URL")
@@ -71,7 +76,11 @@ func New(baseURL, token string) (*Client, error) {
 		return nil, errors.New("invalid GitLab URL path")
 	}
 	u.RawPath = rawPath
-	return &Client{baseURL: u, token: token, HTTPClient: &http.Client{}}, nil
+	transport, err := transportWithOptions(options)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{baseURL: u, token: token, HTTPClient: &http.Client{Transport: transport}}, nil
 }
 
 type commitResponse struct {

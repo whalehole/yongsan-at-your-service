@@ -32,6 +32,9 @@ func actionError(action string, cause error, write bool) error {
 		reason = "the request was canceled."
 	case errors.Is(cause, context.DeadlineExceeded):
 		reason = "the request timed out."
+	case certificateVerificationFailed(cause):
+		reason = "GitLab's TLS certificate could not be verified. " + certificateTrustGuidance
+		ambiguous = false
 	case errors.As(cause, &decode):
 		reason = "GitLab returned an invalid or incomplete response."
 	case errors.As(cause, &response):
@@ -91,6 +94,9 @@ func missingTagVerificationError(project, tag string, deletionSent bool, cause e
 		verification = fmt.Sprintf("verification of repository %q was canceled.", project)
 	case errors.Is(cause, context.DeadlineExceeded):
 		verification = fmt.Sprintf("verification of repository %q timed out.", project)
+	case certificateVerificationFailed(cause):
+		verification = fmt.Sprintf("GitLab's TLS certificate could not be verified while verifying repository %q.", project)
+		advice = certificateTrustGuidance
 	case errors.As(cause, &decode):
 		verification = fmt.Sprintf("GitLab returned an invalid or incomplete response while verifying repository %q.", project)
 		advice = "Check the GitLab server and retry repository verification."
