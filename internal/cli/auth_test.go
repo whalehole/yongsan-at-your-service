@@ -52,7 +52,7 @@ func TestTokenEnvironmentFlagOverridesConfiguredToken(t *testing.T) {
 	if err := os.WriteFile("yas.yaml", data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{tokenEnv: "YAS_AUTH_TEST", format: "text"}
+	a := &app{tokenEnv: "YAS_AUTH_TEST", format: "text", options: Options{ConfigPath: "yas.yaml"}}
 	cmd := New(Options{})
 	if err := cmd.PersistentFlags().Set("token-env", "YAS_AUTH_TEST"); err != nil {
 		t.Fatal(err)

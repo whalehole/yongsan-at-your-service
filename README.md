@@ -15,7 +15,7 @@ go build -o bin/yas ./cmd/yas
 ./bin/yas version
 ```
 
-The examples below use `yas`. Add the built binary's directory to `PATH`, install it in a directory already on `PATH`, or replace `yas` with the absolute path to your binary. Configuration is always resolved from your **current working directory**, regardless of where the executable lives.
+The examples below use `yas`. Add the built binary's directory to `PATH`, install it in a directory already on `PATH`, or replace `yas` with the absolute path to your binary. You can run it from any directory: configuration lives in `bin/yas.yaml` beside the actual executable, after resolving symlinks. With the build command above, that file is `bin/yas.yaml`.
 
 To embed a release version:
 
@@ -27,14 +27,13 @@ Git does not need to be installed to run `yas`: repository operations use GitLab
 
 ## Quick start
 
-Run the following in the directory where you want to keep your operation configuration:
+Build or install the executable first, then run the following from any directory:
 
 ```bash
 yas config init
-# Edit yas.yaml with your GitLab URL, repository lists, source refs, and image names.
+# Edit the full path printed by config init with your GitLab URL, access token,
+# repository lists, source refs, and image settings.
 yas config validate
-
-# Set gitlab.token in yas.yaml to your access token.
 
 yas tag batch --branch release/1.2 --dry-run
 yas build batch --tag v1.2.0 --dry-run
@@ -47,17 +46,21 @@ yas tag batch --branch release/1.2
 yas build batch --tag v1.2.0
 ```
 
-`config init` creates a commented example and refuses to overwrite an existing file. Replace the example project identifiers before performing operations. You can also use [yas.example.yaml](yas.example.yaml) as a reference.
+`config init` creates a commented example beside the executable, prints its full path, and refuses to overwrite an existing file. Replace the example project identifiers before performing operations. You can also use [yas.example.yaml](yas.example.yaml) as a reference.
 
 ### The fixed configuration file
 
-All tagging and build commands require `yas.yaml` in the current working directory. There is no `--config` option, no search in parent directories, and no prompt for an alternative filename. A missing file produces an error directing you to `yas config init`.
+Tagging, builds, release scans, and configuration validation use `bin/yas.yaml` in the actual executable's directory. For example, `/tools/yas` uses `/tools/yas.yaml`; invoking a symlink to `/tools/yas` uses that same file. There is no `--config` option, working-directory or parent-directory fallback, or prompt for an alternative filename. A missing file produces an error directing you to `yas config init`.
+
+Move or copy an existing configuration beside the executable manually; the application does not migrate it automatically. Use a built executable for initialization and normal runs: `go run` creates a temporary executable, so its configuration location is also temporary.
+
+Relative output paths use the current working directory: default batch reports go under `./reports`, image archive batches under `./images`, and release drafts use `release-notes-<version>.yaml`. Explicit report, archive-parent, and release-draft paths retain their respective command meanings.
 
 `yas config init`, `yas help`, command-specific `--help`, and `yas version` work without a configuration file. `yas config validate` needs the file but contacts neither GitLab nor Docker and does not require a token.
 
 ## GitLab authentication
 
-Put your access token directly in `yas.yaml`:
+Put your access token directly in `bin/yas.yaml`:
 
 ```yaml
 gitlab:
@@ -65,7 +68,7 @@ gitlab:
   token: "your-gitlab-access-token"
 ```
 
-A nonempty `gitlab.token` takes precedence over environment authentication. Keep your local `yas.yaml` private; it is already excluded by this repository's `.gitignore`.
+A nonempty `gitlab.token` takes precedence over environment authentication. Keep your local `bin/yas.yaml` private; it is already excluded by this repository's `.gitignore`.
 
 Alternatively, leave `token` empty and use `gitlab.token_env` to name an environment variable containing the token (default: `GITLAB_TOKEN`). The CLI does not prompt for a token or load `.env` files automatically.
 
@@ -113,7 +116,7 @@ gitlab:
 | `yas build one` | Build one image from a commit or Git tag |
 | `yas build batch` | Build selected entries from `building.repositories` |
 | `yas release scan` | Collect new release commits across selected repositories and write an editable YAML draft |
-| `yas config init` | Create the example `yas.yaml` without overwriting a file |
+| `yas config init` | Create the example `bin/yas.yaml` beside the executable without overwriting a file |
 | `yas config validate` | Validate the entire configuration locally |
 | `yas help [command]` | Display help, such as `yas help tag one` |
 | `yas version` | Print the application version |
@@ -182,7 +185,7 @@ yas tag one --project my-group/service-a --branch main
 
 `yas build one` prompts for the project, source type (Git tag or commit), source value, and an optional output image override (Enter accepts the generated name). Optional settings use configuration or built-in defaults; the CLI does not ask you to fill every optional field.
 
-Batch commands obtain repository details from their own configuration list and do not prompt for missing repository fields. A missing or invalid `yas.yaml` is reported before operation prompts begin.
+Batch commands obtain repository details from their own configuration list and do not prompt for missing repository fields. A missing or invalid `bin/yas.yaml` is reported before operation prompts begin.
 
 For CI and scripts, provide all required flags and use `--non-interactive`. Missing values produce an error instead of waiting for input. This behavior also applies automatically when standard input is not a terminal; piping answers into a command does not enable prompts.
 
@@ -472,7 +475,7 @@ GitLab imposes archive and API rate limits. Concurrency is a maximum number of a
 
 ## Scan changes for release notes
 
-`yas release scan` reads `release.repositories` in `yas.yaml`, collects commits reachable from the target release that are absent from the baseline history, and writes an editable YAML release-notes draft for human completion. It makes no Git changes, creates no tags, and does not invoke Docker.
+`yas release scan` reads `release.repositories` in `bin/yas.yaml`, collects commits reachable from the target release that are absent from the baseline history, and writes an editable YAML release-notes draft for human completion. It makes no Git changes, creates no tags, and does not invoke Docker.
 
 Configure the components to include in release notes:
 
@@ -515,21 +518,23 @@ The YAML document contains:
 - One editable `commits` list per component, initialized with the original commit titles/messages, authors, full SHAs, and links.
 - Empty `upgrade_notes` and `known_issues` sections for editorial input.
 
-Every `components[].commits[]` entry includes optional numeric identifiers for manual completion:
+Every `components[].commits[]` entry includes optional numeric identifiers and a blank `remarks` string for a manually written description of the change:
 
 ```yaml
 change_request: null
 incident: null
+remarks: ""
 ```
 
-`null` means no linked record. Edit either field when relevant, for example:
+`null` means no linked record. Fill the identifiers when relevant and describe the change's impact in `remarks`, for example:
 
 ```yaml
 change_request: 256
 incident: 128
+remarks: "Restores checkout after payment failures."
 ```
 
-These identifiers are not fetched or inferred automatically.
+The identifiers and remarks are not fetched or inferred automatically.
 
 Review and complete release information directly under `commits`, keeping each commit's SHA and link for provenance. Add the release summary, upgrade instructions, and known issues before publishing.
 

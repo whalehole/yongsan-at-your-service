@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -16,13 +17,17 @@ import (
 	"github.com/yongsan/yongsan-at-your-service/internal/gitlab"
 )
 
-// Options allows callers and tests to supply terminal streams explicitly.
+// Options allows callers and tests to supply streams and execution settings.
 type Options struct {
 	In          io.Reader
 	Out         io.Writer
 	Err         io.Writer
 	Interactive bool
 	Version     string
+
+	// ConfigPath lets embedded callers supply a configuration location. The
+	// executable leaves it empty to use yas.yaml beside its resolved binary.
+	ConfigPath string
 }
 
 type exitError struct {
@@ -61,7 +66,8 @@ type app struct {
 	buildTargets   map[string]bool
 }
 
-// New creates an independent command tree. All operation commands load ./yas.yaml.
+// New creates an independent command tree. By default, configuration lives
+// beside the resolved yas executable.
 func New(options Options) *cobra.Command {
 	if options.In == nil {
 		options.In = os.Stdin
@@ -82,7 +88,7 @@ func New(options Options) *cobra.Command {
 	}
 	root := &cobra.Command{
 		Use: "yas", Short: "Concurrent GitLab tagging, Docker builds, and release scans",
-		Long: "Tag GitLab repositories, build Docker images, and collect release commits from exact revisions.\nOperation commands always load yas.yaml from the current working directory.",
+		Long: "Tag GitLab repositories, build Docker images, and collect release commits from exact revisions.\nConfiguration is stored in yas.yaml beside the resolved yas executable.",
 		Args: cobra.NoArgs, SilenceErrors: true, SilenceUsage: true,
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 	}
@@ -154,11 +160,26 @@ func changed(cmd *cobra.Command, name string) bool {
 	return false
 }
 
+func (a *app) configPath() (string, error) {
+	if a.options.ConfigPath != "" {
+		return filepath.Abs(a.options.ConfigPath)
+	}
+	return config.Path()
+}
+
+func (a *app) loadConfig() (*config.Config, error) {
+	filename, err := a.configPath()
+	if err != nil {
+		return nil, err
+	}
+	return config.LoadFile(filename)
+}
+
 func (a *app) load(cmd *cobra.Command, operation string, batch bool) (*config.Config, error) {
 	if a.format != "text" && a.format != "json" {
 		return nil, usageError(fmt.Errorf("--format must be text or json"))
 	}
-	cfg, err := config.Load()
+	cfg, err := a.loadConfig()
 	if err != nil {
 		return nil, usageError(err)
 	}
@@ -630,16 +651,20 @@ func selectProjects(projects, only []string) ([]int, error) {
 }
 
 func (a *app) configCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "config", Short: "Create or validate the fixed yas.yaml configuration", Args: cobra.NoArgs}
+	cmd := &cobra.Command{Use: "config", Short: "Create or validate yas.yaml beside the executable", Args: cobra.NoArgs}
 	cmd.AddCommand(&cobra.Command{
-		Use: "init", Short: "Create an example yas.yaml without overwriting an existing file", Args: cobra.NoArgs,
+		Use: "init", Short: "Create yas.yaml beside the executable without overwriting an existing file", Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			file, err := os.OpenFile(config.Filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+			filename, err := a.configPath()
+			if err != nil {
+				return usageError(err)
+			}
+			file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 			if errors.Is(err, os.ErrExist) {
-				return usageError(fmt.Errorf("yas.yaml already exists; it was not overwritten"))
+				return usageError(fmt.Errorf("%s already exists; it was not overwritten", filename))
 			}
 			if err != nil {
-				return operationError(err)
+				return operationError(fmt.Errorf("create configuration beside the executable at %s: %w", filename, err))
 			}
 			_, writeErr := io.WriteString(file, config.Example)
 			closeErr := file.Close()
@@ -649,13 +674,13 @@ func (a *app) configCommand() *cobra.Command {
 			if closeErr != nil {
 				return operationError(closeErr)
 			}
-			_, err = fmt.Fprintln(a.options.Out, "Created yas.yaml. Edit its projects, sources, and images before running operations.")
+			_, err = fmt.Fprintf(a.options.Out, "Created %s. Edit its projects, sources, and images before running operations.\n", filename)
 			return err
 		},
 	}, &cobra.Command{
-		Use: "validate", Short: "Validate yas.yaml locally without contacting GitLab or Docker", Args: cobra.NoArgs,
+		Use: "validate", Short: "Validate yas.yaml beside the executable without contacting GitLab or Docker", Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			cfg, err := config.Load()
+			cfg, err := a.loadConfig()
 			if err != nil {
 				return usageError(err)
 			}

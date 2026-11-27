@@ -40,6 +40,8 @@ type Component struct {
 type Commit struct {
 	SHA   string `yaml:"sha" json:"sha"`
 	Title string `yaml:"title" json:"title"`
+	// Remarks is a high-level description for the user to complete.
+	Remarks string `yaml:"remarks" json:"remarks"`
 	// Keep unfilled external IDs visible as null placeholders in draft output.
 	ChangeRequest *int64 `yaml:"change_request" json:"change_request"`
 	Incident      *int64 `yaml:"incident" json:"incident"`

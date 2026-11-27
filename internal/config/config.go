@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -100,20 +101,54 @@ type Source struct {
 	Tag    string `yaml:"tag"`
 }
 
-// Load reads yas.yaml from the current working directory. It never searches
-// parent directories or prompts for an alternative filename.
+// Path locates yas.yaml beside the real executable, resolving invocation
+// symlinks rather than using the working directory or symlink directory.
+func Path() (string, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locate executable for configuration: %w", err)
+	}
+	return pathForExecutable(executable)
+}
+
+func pathForExecutable(executable string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(executable)
+	if err != nil {
+		return "", fmt.Errorf("resolve executable path %q for configuration: %w", executable, err)
+	}
+	absolute, err := filepath.Abs(resolved)
+	if err != nil {
+		return "", fmt.Errorf("resolve absolute executable path %q for configuration: %w", resolved, err)
+	}
+	return filepath.Join(filepath.Dir(absolute), Filename), nil
+}
+
+// Load reads yas.yaml beside the real executable. No other location is searched.
 func Load() (*Config, error) {
-	f, err := os.Open(Filename)
+	filename, err := Path()
+	if err != nil {
+		return nil, err
+	}
+	return LoadFile(filename)
+}
+
+// LoadFile reads the explicitly supplied configuration path without fallback.
+func LoadFile(filename string) (*Config, error) {
+	absolute, err := filepath.Abs(filename)
+	if err != nil {
+		return nil, fmt.Errorf("resolve configuration path %q: %w", filename, err)
+	}
+	f, err := os.Open(absolute)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("%s was not found in the current directory; run \"yas config init\" to create an example configuration", Filename)
+		return nil, fmt.Errorf("%s was not found at %q; run \"yas config init\" to create an example configuration: %w", Filename, absolute, err)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", Filename, err)
+		return nil, fmt.Errorf("open configuration %q: %w", absolute, err)
 	}
 	defer f.Close()
 	c, err := Parse(f)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", Filename, err)
+		return nil, fmt.Errorf("configuration %q: %w", absolute, err)
 	}
 	return c, nil
 }

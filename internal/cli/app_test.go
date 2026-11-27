@@ -19,7 +19,8 @@ import (
 
 const testSHA = "0123456789abcdef0123456789abcdef01234567"
 
-// These tests remain serial because yas deliberately uses the process cwd.
+// These tests remain serial because their fixtures and output files use the
+// process cwd. ConfigPath keeps each command's configuration in its fixture.
 func workingDirectory(t *testing.T) string {
 	t.Helper()
 	previous, err := os.Getwd()
@@ -53,7 +54,7 @@ func executeTest(args []string, input string, interactive bool) (string, string,
 	if interactive {
 		input += "\n\n\n\n\n"
 	}
-	cmd := New(Options{In: strings.NewReader(input), Out: &stdout, Err: &stderr, Interactive: interactive, Version: "test"})
+	cmd := New(Options{In: strings.NewReader(input), Out: &stdout, Err: &stderr, Interactive: interactive, Version: "test", ConfigPath: "yas.yaml"})
 	cmd.SetArgs(args)
 	err := cmd.ExecuteContext(context.Background())
 	return stdout.String(), stderr.String(), err

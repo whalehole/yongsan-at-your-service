@@ -1,4 +1,5 @@
-# yas always reads yas.yaml from the current working directory.
+# yas reads yas.yaml beside its actual executable, after resolving symlinks.
+# Run yas config init to create that file and print its full path.
 # Replace the example GitLab projects and image names before running jobs.
 version: 1
 

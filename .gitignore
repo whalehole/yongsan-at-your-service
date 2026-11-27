@@ -36,7 +36,7 @@ go.work.sum
 # Local executable and repository-specific configuration.
 /bin/
 /yas
-/yas.yaml
+/bin/yas.yaml
 /reports/
 /images/
 

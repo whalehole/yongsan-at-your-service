@@ -13,7 +13,7 @@ func TestCanceledReleaseScanWritesEverySelectedComponent(t *testing.T) {
 	fixture := newReleaseScanFixture(t, nil)
 	writeConfig(t, fixture.server.URL, "release:\n  repositories:\n    - project: group/first\n    - project: group/queued\n")
 	var stdout, stderr bytes.Buffer
-	command := New(Options{Out: &stdout, Err: &stderr})
+	command := New(Options{Out: &stdout, Err: &stderr, ConfigPath: "yas.yaml"})
 	command.SetArgs([]string{"release", "scan", "--from", "2.2.7", "--to", "2.2.8", "--output", "canceled.yaml", "--concurrency", "1", "--format", "json", "--no-progress"})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -37,7 +37,7 @@ func TestReleaseDraftSurvivesBrokenTerminalOutput(t *testing.T) {
 	workingDirectory(t)
 	fixture := newReleaseScanFixture(t, nil)
 	writeConfig(t, fixture.server.URL, "release:\n  repositories:\n    - project: group/changed\n")
-	command := New(Options{Out: unavailableReportOutput{}, Err: io.Discard})
+	command := New(Options{Out: unavailableReportOutput{}, Err: io.Discard, ConfigPath: "yas.yaml"})
 	command.SetArgs([]string{"release", "scan", "--from", "2.2.7", "--to", "2.2.8", "--output", "saved.yaml", "--no-progress"})
 	err := command.ExecuteContext(context.Background())
 	if ExitCode(err) != 1 || !strings.Contains(err.Error(), "output unavailable") {

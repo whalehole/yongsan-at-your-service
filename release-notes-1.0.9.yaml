@@ -1,0 +1,61 @@
+# Draft release notes generated from GitLab commit metadata.
+# Edit and enrich each commit entry, then add the release summary, upgrade notes, and known issues.
+# Failed components are incomplete scans, not evidence of an empty commit range.
+schema_version: 1
+release:
+  title: Release 1.0.9
+  version: 1.0.9
+  date: "2026-11-27"
+  summary: ""
+  draft: true
+  from: 1.0.0
+  to: 1.0.9
+scan:
+  started_at: "2026-11-26T23:53:48.440908Z"
+  finished_at: "2026-11-26T23:53:49.829757Z"
+  concurrency: 3
+  timeout: 2m0s
+  total: 3
+  changed: 1
+  unchanged: 0
+  failed: 2
+components:
+  - project: yas-dummy-group/dummy-1
+    from_ref: 1.0.0
+    to_ref: 1.0.9
+    from_commit: f63850b7b898f11462a8afb295be662d2b6fc5ab
+    to_commit: 776f80727348f8f7e425063b28be43efb1e96031
+    to_kind: tag
+    status: changed
+    commits:
+      - sha: 776f80727348f8f7e425063b28be43efb1e96031
+        title: Add dummy commit
+        remarks: "The change is just dummy"
+        change_request: null
+        incident: null
+        message: |
+          Add dummy commit
+        author: Chia Yong San
+        committed_at: "2026-11-25T11:29:50.000+08:00"
+        url: https://gitlab.com/yas-dummy-group/dummy-1/-/commit/776f80727348f8f7e425063b28be43efb1e96031
+    duration: 1.388s
+  - project: yas-dummy-group/dummy-2
+    from_ref: 1.0.0
+    to_ref: 1.0.9
+    to_commit: 450df2001dfd71bec267097401f1f495673c74a1
+    to_kind: tag
+    status: failed
+    error: 'Cannot look up tag "1.0.0" in repository "yas-dummy-group/dummy-2": GitLab could not find the requested resource, or it is not accessible to this token (HTTP 404). Check the repository, reference, and token access.'
+    commits: []
+    duration: 816ms
+  - project: yas-dummy-group/dummy-3
+    from_ref: 1.0.0
+    to_ref: 1.0.9
+    to_commit: dc8b9465eb892158cb293cb47ebb4cb03fd76a1d
+    to_kind: tag
+    status: failed
+    error: 'Cannot look up tag "1.0.0" in repository "yas-dummy-group/dummy-3": GitLab could not find the requested resource, or it is not accessible to this token (HTTP 404). Check the repository, reference, and token access.'
+    commits: []
+    duration: 816ms
+upgrade_notes: []
+known_issues: []
