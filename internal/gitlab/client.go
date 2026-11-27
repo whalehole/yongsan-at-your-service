@@ -84,7 +84,22 @@ func NewWithOptions(baseURL, token string, options Options) (*Client, error) {
 }
 
 type commitResponse struct {
-	ID string `json:"id"`
+	ID    string          `json:"id"`
+	Title json.RawMessage `json:"title"`
+}
+
+// CommitDetails identifies the resolved commit and its optional GitLab title.
+type CommitDetails struct {
+	SHA   string
+	Title string
+}
+
+func (response commitResponse) details(sha string) CommitDetails {
+	// Title is optional display metadata. A non-string title must not change an
+	// operation that previously depended only on a valid commit ID.
+	var title string
+	_ = json.Unmarshal(response.Title, &title)
+	return CommitDetails{SHA: sha, Title: title}
 }
 
 // ProjectPath returns the repository slug, including when addressed by ID.
@@ -107,34 +122,41 @@ type referenceResponse struct {
 
 // ResolveCommit verifies a commit and returns its full SHA.
 func (c *Client) ResolveCommit(ctx context.Context, project, sha string) (string, error) {
+	commit, err := c.ResolveCommitDetails(ctx, project, sha)
+	return commit.SHA, err
+}
+
+// ResolveCommitDetails obtains metadata from the same commit lookup used for
+// resolution, including the existing abbreviated-commit verification flow.
+func (c *Client) ResolveCommitDetails(ctx context.Context, project, sha string) (CommitDetails, error) {
 	var commit commitResponse
 	if err := c.getJSON(ctx, c.endpoint(project, "repository", "commits", sha), &commit); err != nil {
 		if len(sha) < 40 && IsNotFound(err) {
-			return c.resolveCommitPrefix(ctx, project, sha)
+			return c.resolveCommitPrefixDetails(ctx, project, sha)
 		}
-		return "", actionError(fmt.Sprintf("resolve commit %q in repository %q", sha, project), err, false)
+		return CommitDetails{}, actionError(fmt.Sprintf("resolve commit %q in repository %q", sha, project), err, false)
 	}
 	full, err := resolvedSHA(commit.ID)
 	if err != nil {
-		return "", responseError(fmt.Sprintf("resolve commit %q in repository %q", sha, project), err)
+		return CommitDetails{}, responseError(fmt.Sprintf("resolve commit %q in repository %q", sha, project), err)
 	}
 	if !strings.HasPrefix(full, strings.ToLower(sha)) {
-		return "", fmt.Errorf("GitLab resolved commit %q in repository %q to a different commit; use a longer or full commit hash", sha, project)
+		return CommitDetails{}, fmt.Errorf("GitLab resolved commit %q in repository %q to a different commit; use a longer or full commit hash", sha, project)
 	}
-	return full, nil
+	return commit.details(full), nil
 }
 
 // Some GitLab installations reject an otherwise valid abbreviated revision.
 // Search all visible commit metadata, never source files or cloned Git history.
 // Exhaust the listing before accepting a match so a later match cannot be
 // silently ignored. Both pagination and the caller's deadline bound the work.
-func (c *Client) resolveCommitPrefix(ctx context.Context, project, prefix string) (string, error) {
+func (c *Client) resolveCommitPrefixDetails(ctx context.Context, project, prefix string) (CommitDetails, error) {
 	const pageSize = 100
 	const maxPages = 1000
 	match := ""
 	for page := 1; page <= maxPages; page++ {
 		if err := ctx.Err(); err != nil {
-			return "", withExplanation(actionError(fmt.Sprintf("search commits matching prefix %q in repository %q", prefix, project), err, false), "The search did not complete, so uniqueness could not be verified. Use a full commit SHA.")
+			return CommitDetails{}, withExplanation(actionError(fmt.Sprintf("search commits matching prefix %q in repository %q", prefix, project), err, false), "The search did not complete, so uniqueness could not be verified. Use a full commit SHA.")
 		}
 		u := c.endpoint(project, "repository", "commits")
 		query := u.Query()
@@ -144,48 +166,59 @@ func (c *Client) resolveCommitPrefix(ctx context.Context, project, prefix string
 		u.RawQuery = query.Encode()
 		var commits []commitResponse
 		if err := c.getJSON(ctx, u, &commits); err != nil {
-			return "", withExplanation(actionError(fmt.Sprintf("search commits matching prefix %q in repository %q", prefix, project), err, false), "The search did not complete, so uniqueness could not be verified. Use a full commit SHA.")
+			return CommitDetails{}, withExplanation(actionError(fmt.Sprintf("search commits matching prefix %q in repository %q", prefix, project), err, false), "The search did not complete, so uniqueness could not be verified. Use a full commit SHA.")
 		}
 		for _, commit := range commits {
 			full, err := resolvedSHA(commit.ID)
 			if err != nil {
-				return "", responseError(fmt.Sprintf("search commits matching prefix %q in repository %q", prefix, project), err)
+				return CommitDetails{}, responseError(fmt.Sprintf("search commits matching prefix %q in repository %q", prefix, project), err)
 			}
 			if !strings.HasPrefix(full, strings.ToLower(prefix)) {
 				continue
 			}
 			if match != "" && match != full {
-				return "", fmt.Errorf("commit prefix %q in repository %q matches multiple commits; use a longer or full commit hash", prefix, project)
+				return CommitDetails{}, fmt.Errorf("commit prefix %q in repository %q matches multiple commits; use a longer or full commit hash", prefix, project)
 			}
 			match = full
 		}
 		if len(commits) < pageSize {
 			if match == "" {
-				return "", fmt.Errorf("commit prefix %q was not found in the commit listing for repository %q; check the repository and ensure the commit is pushed and accessible", prefix, project)
+				return CommitDetails{}, fmt.Errorf("commit prefix %q was not found in the commit listing for repository %q; check the repository and ensure the commit is pushed and accessible", prefix, project)
 			}
 			// Verify the selected full SHA still exists before the caller can write.
-			return c.ResolveCommit(ctx, project, match)
+			return c.ResolveCommitDetails(ctx, project, match)
 		}
 	}
-	return "", fmt.Errorf("commit prefix %q in repository %q: search exceeded %d commits; uniqueness was not established, use a longer or full commit hash", prefix, project, pageSize*maxPages)
+	return CommitDetails{}, fmt.Errorf("commit prefix %q in repository %q: search exceeded %d commits; uniqueness was not established, use a longer or full commit hash", prefix, project, pageSize*maxPages)
 }
 
 // ResolveBranch returns the current commit SHA of a branch.
 func (c *Client) ResolveBranch(ctx context.Context, project, branch string) (string, error) {
+	commit, err := c.ResolveBranchDetails(ctx, project, branch)
+	return commit.SHA, err
+}
+
+// ResolveBranchDetails returns the branch commit and title from one lookup.
+func (c *Client) ResolveBranchDetails(ctx context.Context, project, branch string) (CommitDetails, error) {
 	var ref referenceResponse
 	if err := c.getJSON(ctx, c.endpoint(project, "repository", "branches", branch), &ref); err != nil {
-		return "", actionError(fmt.Sprintf("resolve branch %q in repository %q", branch, project), err, false)
+		return CommitDetails{}, actionError(fmt.Sprintf("resolve branch %q in repository %q", branch, project), err, false)
 	}
 	sha, err := resolvedSHA(ref.Commit.ID)
 	if err != nil {
-		return "", responseError(fmt.Sprintf("resolve branch %q in repository %q", branch, project), err)
+		return CommitDetails{}, responseError(fmt.Sprintf("resolve branch %q in repository %q", branch, project), err)
 	}
-	return sha, nil
+	return ref.Commit.details(sha), nil
 }
 
 // ResolveTag returns the commit SHA of a lightweight or annotated tag.
 func (c *Client) ResolveTag(ctx context.Context, project, tag string) (string, error) {
 	return c.tagCommit(ctx, project, tag)
+}
+
+// ResolveTagDetails returns the tag's commit metadata, not its tag-object target.
+func (c *Client) ResolveTagDetails(ctx context.Context, project, tag string) (CommitDetails, error) {
+	return c.tagCommitDetails(ctx, project, tag)
 }
 
 // ValidateBranch checks reachability: commit may be the branch tip or any of its
@@ -278,12 +311,20 @@ func existingTagStatus(project, tag, wanted, current string) (string, error) {
 // Ambiguous transport errors are not retried: a concurrently recreated tag must
 // not be removed by replaying a deletion whose first outcome is unknown.
 func (c *Client) DeleteTag(ctx context.Context, project, tag string, dryRun bool) (status, commit string, err error) {
-	commit, err = c.tagCommit(ctx, project, tag)
+	status, details, err := c.DeleteTagDetails(ctx, project, tag, dryRun)
+	return status, details.SHA, err
+}
+
+// DeleteTagDetails retains the pre-deletion lookup metadata for successful,
+// rejected, raced, and unconfirmed deletions without an additional title lookup.
+func (c *Client) DeleteTagDetails(ctx context.Context, project, tag string, dryRun bool) (status string, commit CommitDetails, err error) {
+	commit, err = c.tagCommitDetails(ctx, project, tag)
 	if IsNotFound(err) {
-		return c.missingDeletedTag(ctx, project, tag, false)
+		status, _, checkErr := c.missingDeletedTag(ctx, project, tag, false)
+		return status, CommitDetails{}, checkErr
 	}
 	if err != nil {
-		return "", "", withExplanation(err, "Deletion was not attempted.")
+		return "", CommitDetails{}, withExplanation(err, "Deletion was not attempted.")
 	}
 	if dryRun {
 		return "planned", commit, nil
@@ -337,15 +378,20 @@ func (c *Client) Archive(ctx context.Context, project, sha, path string) (io.Rea
 }
 
 func (c *Client) tagCommit(ctx context.Context, project, tag string) (string, error) {
+	commit, err := c.tagCommitDetails(ctx, project, tag)
+	return commit.SHA, err
+}
+
+func (c *Client) tagCommitDetails(ctx context.Context, project, tag string) (CommitDetails, error) {
 	var ref referenceResponse
 	if err := c.getJSON(ctx, c.endpoint(project, "repository", "tags", tag), &ref); err != nil {
-		return "", actionError(fmt.Sprintf("look up tag %q in repository %q", tag, project), err, false)
+		return CommitDetails{}, actionError(fmt.Sprintf("look up tag %q in repository %q", tag, project), err, false)
 	}
 	sha, err := resolvedSHA(ref.Commit.ID)
 	if err != nil {
-		return "", responseError(fmt.Sprintf("look up tag %q in repository %q", tag, project), err)
+		return CommitDetails{}, responseError(fmt.Sprintf("look up tag %q in repository %q", tag, project), err)
 	}
-	return sha, nil
+	return ref.Commit.details(sha), nil
 }
 
 func resolvedSHA(sha string) (string, error) {

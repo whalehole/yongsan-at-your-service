@@ -748,7 +748,7 @@ Each report includes:
 - The operation, application version, GitLab server, and execution or dry-run mode.
 - Start and finish timestamps with time zones, total elapsed time, concurrency, and the per-job timeout.
 - Total, passed, failed, skipped, and planned counts.
-- One row per selected repository job in configuration order, showing its outcome, exact status, source reference, resolved commit SHA when available, destination tag or image, duration, and failure details. Builds also show separate build/save outcomes, archive paths, and save errors when saving is requested.
+- One row per selected repository job in configuration order, showing its outcome, exact status, source reference, commit title beside the full resolved SHA when available, destination tag or image, duration, and failure details. A missing commit title is shown as unavailable and does not change the operation's outcome. Builds also show separate build/save outcomes, archive paths, and save errors when saving is requested.
 
 `created`, `deleted`, and `built` count as **passed**. `skipped` and `planned` remain separate: a skipped job made no change, and a planned dry-run job did not execute the operation. Dry-run reports describe the checks performed and do not prove that a later build or tag write will succeed. Reports contain result details rather than raw Docker logs, configuration contents, environment variables, command-line arguments, or build arguments.
 

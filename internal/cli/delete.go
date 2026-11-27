@@ -97,8 +97,8 @@ func (a *app) deleteTag(batch bool) *cobra.Command {
 					phase = "dry run: checking tag without deleting it"
 				}
 				progress(ctx, r, phase)
-				status, commit, err := client.DeleteTag(ctx, p, tag, a.dryRun)
-				r.Commit = commit
+				status, commit, err := client.DeleteTagDetails(ctx, p, tag, a.dryRun)
+				r.Commit, r.CommitTitle = commit.SHA, commit.Title
 				if err != nil {
 					r.Error = err.Error()
 				} else {

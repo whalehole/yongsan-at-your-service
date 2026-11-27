@@ -14,6 +14,8 @@ import (
 
 const reportTestConfig = "tagging:\n  repositories:\n    - project: group/a\n    - project: group/b\nbuilding:\n  repositories:\n    - project: group/a\n    - project: group/b\n"
 
+const reportCommitTitle = "Restore checkout after payment failure"
+
 func reportTestServer(t *testing.T, operation string, requests *atomic.Int32) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -25,12 +27,12 @@ func reportTestServer(t *testing.T, operation string, requests *atomic.Int32) *h
 		}
 		switch {
 		case strings.Contains(r.URL.Path, "/branches/main"):
-			fmt.Fprintf(w, `{"commit":{"id":%q}}`, testSHA)
+			fmt.Fprintf(w, `{"commit":{"id":%q,"title":%q}}`, testSHA, reportCommitTitle)
 		case strings.Contains(r.URL.Path, "/tags/"):
 			if operation == "tag" {
 				w.WriteHeader(http.StatusNotFound)
 			} else {
-				fmt.Fprintf(w, `{"commit":{"id":%q}}`, testSHA)
+				fmt.Fprintf(w, `{"commit":{"id":%q,"title":%q}}`, testSHA, reportCommitTitle)
 			}
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
@@ -73,7 +75,7 @@ func TestBatchCommandsAutomaticallySaveOneSelectedRepositoryReport(t *testing.T)
 				t.Fatal(err)
 			}
 			var results []result
-			if err := json.Unmarshal([]byte(out), &results); err != nil || len(results) != 1 || results[0].Status != "planned" {
+			if err := json.Unmarshal([]byte(out), &results); err != nil || len(results) != 1 || results[0].Status != "planned" || results[0].CommitTitle != reportCommitTitle {
 				t.Fatalf("results=%s error=%v", out, err)
 			}
 			paths, err := filepath.Glob(filepath.Join("reports", "*.html"))
@@ -81,7 +83,7 @@ func TestBatchCommandsAutomaticallySaveOneSelectedRepositoryReport(t *testing.T)
 				t.Fatalf("report paths=%v error=%v", paths, err)
 			}
 			report := readReportHTML(t, paths[0])
-			for _, expected := range []string{"group/a", "planned"} {
+			for _, expected := range []string{"group/a", "planned", testSHA, reportCommitTitle} {
 				if !strings.Contains(report, expected) {
 					t.Errorf("report does not contain %q: %s", expected, report)
 				}
@@ -92,8 +94,12 @@ func TestBatchCommandsAutomaticallySaveOneSelectedRepositoryReport(t *testing.T)
 			if !strings.Contains(logs, filepath.Base(paths[0])) {
 				t.Fatalf("report path missing from stderr with --no-progress: %q", logs)
 			}
-			if requests.Load() == 0 {
-				t.Fatal("batch did not check the selected repository")
+			wantRequests := int32(1)
+			if tc.operation == "tag" {
+				wantRequests = 2
+			}
+			if requests.Load() != wantRequests {
+				t.Fatalf("commit metadata changed request count: got %d want %d", requests.Load(), wantRequests)
 			}
 		})
 	}

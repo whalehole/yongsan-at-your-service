@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -30,6 +31,7 @@ type reportRow struct {
 	Number                                                            int
 	Outcome, Class, Detail                                            string
 	Target, TargetLabel                                               string
+	CommitLabel, ResolvedCommitTitle                                  string
 	BuildOutcome, BuildClass, SaveOutcome, SaveClass, SaveExplanation string
 }
 
@@ -57,6 +59,16 @@ func renderBatchReport(out io.Writer, report batchReport) error {
 			data.ArchiveDirectory = r.ArchiveDirectory
 		}
 		row := reportRow{result: r, Number: i + 1, Target: r.Tag, TargetLabel: "Git tag"}
+		if r.Commit != "" {
+			row.CommitLabel = "Commit"
+			if r.Operation == "tag-delete" {
+				row.CommitLabel = "Last observed tag commit"
+			}
+			row.ResolvedCommitTitle = r.CommitTitle
+			if strings.TrimSpace(row.ResolvedCommitTitle) == "" {
+				row.ResolvedCommitTitle = "Commit title unavailable"
+			}
+		}
 		if r.Image != "" {
 			row.Target, row.TargetLabel = r.Image, "Docker image"
 		}
@@ -162,7 +174,7 @@ header{display:flex;justify-content:space-between;align-items:flex-start;gap:20p
 .notice{border-left:4px solid #bc881a;background:#fff9e9;padding:14px 16px;line-height:1.6;margin:0 0 22px}.summary{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:24px 0}.stat{border:1px solid #dce2e9;border-radius:7px;padding:14px 16px}.stat strong{display:block;font-size:29px;line-height:1.1;margin-bottom:6px}.stat span{font-size:12px;font-weight:650;text-transform:uppercase;letter-spacing:.5px}
 dl{display:grid;grid-template-columns:130px minmax(0,1fr) 130px minmax(0,1fr);gap:9px 14px;font-size:13px;margin:0}dt{color:#5b6879}dd{margin:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
 .table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;table-layout:fixed;font-size:13px}th{text-align:left;background:#f3f5f8;color:#465467;font-size:11px;text-transform:uppercase;letter-spacing:.5px;padding:11px 10px;border-bottom:2px solid #dce2e9}td{vertical-align:top;padding:14px 10px;border-bottom:1px solid #e1e6ec;overflow-wrap:anywhere;line-height:1.5}th:nth-child(1){width:17%}th:nth-child(2){width:11%}th:nth-child(3){width:21%}th:nth-child(4){width:17%}th:nth-child(5){width:8%}th:nth-child(6){width:26%}
-code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;overflow-wrap:anywhere}.muted{color:#687586}.sub{display:block;margin-top:5px;font-size:11px;color:#687586}.detail{white-space:pre-wrap}.stage{margin-bottom:7px}.stage .badge{padding:2px 6px;font-size:10px}.stage-label{display:inline-block;min-width:77px;font-weight:650}.archive{display:block;margin:5px 0 10px}.duration{font-variant-numeric:tabular-nums}.save-summary{padding:13px 16px;border:1px solid #dce2e9;border-radius:7px;line-height:1.7;margin:0 0 24px}.save-summary strong{margin-right:7px}.save-summary span{display:inline-block;margin-right:15px}footer{margin-top:22px;padding-top:16px;border-top:1px solid #e1e6ec;color:#687586;font-size:12px;line-height:1.6}
+code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;overflow-wrap:anywhere}.muted{color:#687586}.sub{display:block;margin-top:5px;font-size:11px;color:#687586}.commit-title{display:block;margin:3px 0 5px;font-weight:650;white-space:pre-wrap;overflow-wrap:anywhere}.detail{white-space:pre-wrap}.stage{margin-bottom:7px}.stage .badge{padding:2px 6px;font-size:10px}.stage-label{display:inline-block;min-width:77px;font-weight:650}.archive{display:block;margin:5px 0 10px}.duration{font-variant-numeric:tabular-nums}.save-summary{padding:13px 16px;border:1px solid #dce2e9;border-radius:7px;line-height:1.7;margin:0 0 24px}.save-summary strong{margin-right:7px}.save-summary span{display:inline-block;margin-right:15px}footer{margin-top:22px;padding-top:16px;border-top:1px solid #e1e6ec;color:#687586;font-size:12px;line-height:1.6}
 @media(max-width:760px){body{padding:12px}main{padding:18px}header{display:block}header>.badge{margin-top:16px}h1{font-size:24px}.summary{gap:6px}.stat{padding:10px 6px}.stat strong{font-size:23px}.stat span{font-size:10px}dl{grid-template-columns:105px minmax(0,1fr)}table{min-width:950px}}
 @media print{@page{size:A4 landscape;margin:12mm}:root{font-size:11px;background:white}body{padding:0}main{max-width:none;border:0;border-radius:0;padding:0}h1{font-size:23px}header{margin-bottom:18px}.summary{margin:18px 0}.stat{padding:10px 12px}.stat strong{font-size:24px}.table-wrap{overflow:visible}table{font-size:10px;min-width:0}th,td{padding:9px 7px}code{font-size:9px}.badge{font-size:10px}.sub{font-size:9px}thead{display:table-header-group}tr{break-inside:avoid}footer{font-size:10px}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 </style>
@@ -191,7 +203,7 @@ code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;o
 <thead><tr><th scope="col">Repository</th><th scope="col">Result</th><th scope="col">Source / commit</th><th scope="col">Target</th><th scope="col">Duration</th><th scope="col">Details / failure reason</th></tr></thead>
 <tbody>{{range .Rows}}
 <tr><td><span class="muted">{{.Number}}.</span> <strong>{{.Project}}</strong></td><td><span class="badge {{.Class}}">{{.Outcome}}</span><span class="sub">{{.Status}}</span></td>
-<td>{{if .Reference}}<code>{{.Reference}}</code>{{else}}<span class="muted">—</span>{{end}}{{if .Commit}}<span class="sub">Resolved commit</span><code>{{.Commit}}</code>{{end}}</td>
+<td>{{if .Reference}}<code>{{.Reference}}</code>{{else}}<span class="muted">—</span>{{end}}{{if .Commit}}<span class="sub">{{.CommitLabel}}</span><span class="commit-title">{{.ResolvedCommitTitle}}</span><code>{{.Commit}}</code>{{end}}</td>
 <td>{{if .Target}}<span class="sub">{{.TargetLabel}}</span><code>{{.Target}}</code>{{else}}<span class="muted">—</span>{{end}}</td><td class="duration">{{.Duration}}</td><td>{{if .BuildOutcome}}<div class="stage"><span class="stage-label">Build</span> <span class="badge {{.BuildClass}}">{{.BuildOutcome}}</span></div>{{end}}{{if .SaveOutcome}}<div class="stage"><span class="stage-label">Docker save</span> <span class="badge {{.SaveClass}}">{{.SaveOutcome}}</span></div>{{end}}{{if and (eq .SaveStatus "saved") .Archive}}<span class="sub">Image archive</span><code class="archive">{{.Archive}}</code>{{end}}{{if .SaveExplanation}}<p class="detail">{{.SaveExplanation}}</p>{{end}}<div class="detail">{{.Detail}}</div></td></tr>
 {{else}}<tr><td colspan="6">No repository jobs were selected.</td></tr>{{end}}</tbody>
 </table></div>

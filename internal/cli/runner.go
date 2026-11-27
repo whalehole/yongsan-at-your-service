@@ -16,6 +16,7 @@ type result struct {
 	Operation        string `json:"operation"`
 	Reference        string `json:"reference,omitempty"`
 	Commit           string `json:"commit,omitempty"`
+	CommitTitle      string `json:"commit_title,omitempty"`
 	Tag              string `json:"tag,omitempty"`
 	Image            string `json:"image,omitempty"`
 	BuildStatus      string `json:"build_status,omitempty"`

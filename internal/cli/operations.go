@@ -24,18 +24,19 @@ func (a *app) tagJob(c *gitlab.Client, repo config.TagRepository) job {
 			r.Error = fmt.Sprintf("Tag creation for %q in repository %q did not start: %v.", repo.Tag, repo.Project, err)
 			return r
 		}
-		var sha string
+		var commit gitlab.CommitDetails
 		var err error
 		if repo.Commit != "" {
-			sha, err = c.ResolveCommit(ctx, repo.Project, repo.Commit)
+			commit, err = c.ResolveCommitDetails(ctx, repo.Project, repo.Commit)
 		} else {
-			sha, err = c.ResolveBranch(ctx, repo.Project, repo.Branch)
+			commit, err = c.ResolveBranchDetails(ctx, repo.Project, repo.Branch)
 		}
 		if err != nil {
 			r.Error = err.Error()
 			return r
 		}
-		r.Commit = sha
+		sha := commit.SHA
+		r.Commit, r.CommitTitle = sha, commit.Title
 		if repo.Commit != "" && repo.Branch != "" {
 			progress(ctx, r, "validating commit against branch "+repo.Branch)
 			if err := c.ValidateBranch(ctx, repo.Project, sha, repo.Branch); err != nil {
@@ -86,18 +87,19 @@ func (a *app) buildJob(c *gitlab.Client, repo config.BuildRepository, save image
 			r.Error = fmt.Sprintf("Build for repository %q did not start: %v.", repo.Project, err)
 			return r
 		}
-		var sha string
+		var commit gitlab.CommitDetails
 		var err error
 		if repo.Source.Commit != "" {
-			sha, err = c.ResolveCommit(ctx, repo.Project, repo.Source.Commit)
+			commit, err = c.ResolveCommitDetails(ctx, repo.Project, repo.Source.Commit)
 		} else {
-			sha, err = c.ResolveTag(ctx, repo.Project, repo.Source.Tag)
+			commit, err = c.ResolveTagDetails(ctx, repo.Project, repo.Source.Tag)
 		}
 		if err != nil {
 			r.Error = err.Error()
 			return r
 		}
-		r.Commit = sha
+		sha := commit.SHA
+		r.Commit, r.CommitTitle = sha, commit.Title
 		if r.Image == "" {
 			name := repo.Project
 			if index := strings.LastIndex(name, "/"); index >= 0 {

@@ -374,3 +374,74 @@ func TestBatchHTMLReportPreservesFullSaveFailureContext(t *testing.T) {
 		t.Error("report lost separate build and save outcomes")
 	}
 }
+
+func TestBatchHTMLReportShowsCommitTitleBesideFullHash(t *testing.T) {
+	report := exampleBatchReport()
+	report.Results = []result{{Project: "group/service", Operation: "build", Reference: "release-v1", Commit: testSHA, CommitTitle: "fix: retain the original payment status", Status: "built"}}
+	var out bytes.Buffer
+	if err := renderBatchReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	html := out.String()
+	want := `<code>release-v1</code><span class="sub">Commit</span><span class="commit-title">fix: retain the original payment status</span><code>` + testSHA + `</code>`
+	if !strings.Contains(html, want) {
+		t.Fatal("source reference, readable commit title, and full hash are not shown together")
+	}
+}
+
+func TestBatchHTMLReportEscapesCommitTitlesWithoutTruncatingLongTitles(t *testing.T) {
+	for _, title := range []string{`fix: <script>alert("title")</script> & preserve status`, strings.Repeat("PaymentReconciliation", 40) + " retains the original result"} {
+		report := exampleBatchReport()
+		report.Results = []result{{Project: "group/service", Operation: "build", Commit: testSHA, CommitTitle: title, Status: "built"}}
+		var out bytes.Buffer
+		if err := renderBatchReport(&out, report); err != nil {
+			t.Fatal(err)
+		}
+		html := out.String()
+		if !strings.Contains(stdhtml.UnescapeString(html), title) || !strings.Contains(html, "<code>"+testSHA+"</code>") {
+			t.Error("commit title or full hash was altered or truncated")
+		}
+		if strings.Contains(html, "<script>") || strings.Contains(title, "<script>") && !strings.Contains(html, "&lt;script&gt;") {
+			t.Error("commit title became executable markup")
+		}
+	}
+}
+
+func TestBatchHTMLReportUnavailableCommitTitleRequiresResolvedHash(t *testing.T) {
+	for _, title := range []string{"", " \t\n "} {
+		report := exampleBatchReport()
+		report.Results = []result{{Project: "group/service", Operation: "build", Commit: testSHA, CommitTitle: title, Status: "built"}}
+		var out bytes.Buffer
+		if err := renderBatchReport(&out, report); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.String(), `<span class="commit-title">Commit title unavailable</span><code>`+testSHA+`</code>`) {
+			t.Errorf("blank title %q did not produce an explicit unavailable label", title)
+		}
+		if report.Results[0].CommitTitle != title {
+			t.Error("rendering fabricated a title in the operation result")
+		}
+	}
+	report := exampleBatchReport()
+	report.Results = []result{{Project: "group/unresolved", Operation: "build", Status: "failed"}}
+	var out bytes.Buffer
+	if err := renderBatchReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), `<span class="commit-title">`) || !strings.Contains(out.String(), `<td><span class="muted">—</span></td>`) {
+		t.Error("unresolved commit was given a title or lost its empty-source marker")
+	}
+}
+
+func TestBatchHTMLReportLabelsLastObservedTagCommit(t *testing.T) {
+	report := exampleBatchReport()
+	report.Operation = "tag-delete"
+	report.Results = []result{{Project: "group/service", Operation: "tag-delete", Tag: "release-v1", Commit: testSHA, CommitTitle: "fix: preserve the original tag target", Status: "failed", Error: "The tag target changed during deletion."}}
+	var out bytes.Buffer
+	if err := renderBatchReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `<span class="sub">Last observed tag commit</span><span class="commit-title">fix: preserve the original tag target</span><code>`+testSHA+`</code>`) {
+		t.Error("deletion report implies the observed tag commit is a fresh resolution")
+	}
+}
