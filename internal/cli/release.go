@@ -18,35 +18,9 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-type releaseDocument struct {
-	SchemaVersion int                 `yaml:"schema_version"`
-	Release       releaseMetadata     `yaml:"release"`
-	Scan          releaseScanMetadata `yaml:"scan"`
-	Components    []release.Component `yaml:"components"`
-	UpgradeNotes  []string            `yaml:"upgrade_notes"`
-	KnownIssues   []string            `yaml:"known_issues"`
-}
-
-type releaseMetadata struct {
-	Title   string `yaml:"title"`
-	Version string `yaml:"version"`
-	Date    string `yaml:"date"`
-	Summary string `yaml:"summary"`
-	Draft   bool   `yaml:"draft"`
-	From    string `yaml:"from,omitempty"`
-	To      string `yaml:"to"`
-}
-
-type releaseScanMetadata struct {
-	StartedAt   string `yaml:"started_at"`
-	FinishedAt  string `yaml:"finished_at"`
-	Concurrency int    `yaml:"concurrency"`
-	Timeout     string `yaml:"timeout"`
-	Total       int    `yaml:"total"`
-	Changed     int    `yaml:"changed"`
-	Unchanged   int    `yaml:"unchanged"`
-	Failed      int    `yaml:"failed"`
-}
+type releaseDocument = release.Document
+type releaseMetadata = release.Metadata
+type releaseScanMetadata = release.ScanMetadata
 
 func (a *app) releaseScan() *cobra.Command {
 	var options release.Options

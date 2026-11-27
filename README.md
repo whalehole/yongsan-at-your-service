@@ -56,7 +56,7 @@ Move or copy an existing configuration beside the executable manually; the appli
 
 Relative output paths use the current working directory: default batch reports go under `./reports`, image archive batches under `./images`, and release drafts use `release-notes-<version>.yaml`. Explicit report, archive-parent, and release-draft paths retain their respective command meanings.
 
-`yas config init`, `yas help`, command-specific `--help`, and `yas version` work without a configuration file. `yas config validate` needs the file but contacts neither GitLab nor Docker and does not require a token.
+`yas config init`, `yas help`, command-specific `--help`, `yas version`, `yas release render`, and the interactive root operation menu work without a configuration file. Selecting an operation that uses configuration still loads its required file. `yas config validate` needs the file but contacts neither GitLab nor Docker and does not require a token.
 
 ## GitLab authentication
 
@@ -116,6 +116,7 @@ gitlab:
 | `yas build one` | Build one image from a commit or Git tag |
 | `yas build batch` | Build selected entries from `building.repositories` |
 | `yas release scan` | Collect new release commits across selected repositories and write an editable YAML draft |
+| `yas release render` | Turn completed release-notes YAML into standalone HTML with selectable grouping |
 | `yas config init` | Create the example `bin/yas.yaml` beside the executable without overwriting a file |
 | `yas config validate` | Validate the entire configuration locally |
 | `yas help [command]` | Display help, such as `yas help tag one` |
@@ -543,6 +544,35 @@ References are resolved once per component, then GitLab's paginated commit listi
 A missing/inaccessible tag, denied request, timed-out listing, or incomplete pagination is a failed component. Successful and failed components are both saved in the YAML draft in selected configuration order; any component failure returns exit code `1`. Validation errors before scanning do not create a draft.
 
 `--format text|json` controls the terminal summary; JSON stdout is an array of component results. The YAML output path is announced on stderr, including with `--no-progress`. Release scans do not create the batch HTML operation report. `--dry-run` is rejected because scanning already performs read-only GitLab requests and writes the requested draft.
+
+## Render release notes as HTML
+
+After completing the editable YAML, generate a standalone HTML document from that file:
+
+```bash
+# Default: writes drafts/release-notes-2.2.8.html beside the input:
+yas release render --input drafts/release-notes-2.2.8.yaml
+# Choose the output file and initial grouping:
+yas release render --input drafts/release-notes-2.2.8.yaml --output releases/2.2.8.html --group-by change-request
+```
+
+Rendering uses only the input YAML; it requires no configuration file, GitLab token, Docker, or network connection. The YAML is not rewritten. The HTML includes the completed commit information, identifiers, remarks, release metadata, unchanged components, and any scan failures. It displays the input's `release.draft` value as provided; rendering does not clear that flag.
+
+Open the HTML in a browser to read it offline or print it. A dropdown switches between all five views without generating another file. `--group-by` selects the initial view and defaults to `repository`:
+
+| Grouping | Commits grouped by |
+| --- | --- |
+| `repository` | Component project |
+| `change-request` | Numeric `change_request` identifier |
+| `incident` | Numeric `incident` identifier |
+| `remarks` | Exact `remarks` string, including case and leading/trailing whitespace |
+| `author` | Commit author |
+
+Missing identifiers, remarks, and authors have explicit buckets so those commits remain visible. Remarks are not trimmed, case-folded, or otherwise normalized when grouping.
+
+Without `--output`, HTML replaces the input filename's `.yaml` or `.yml` extension with `.html` in the same directory. An explicit relative output path is resolved from the current working directory. Existing files are never overwritten, and the new HTML file uses permissions `0600`.
+
+In an interactive terminal, `yas release render` prompts for an omitted input path, the initial grouping, and an output path with its default. The root `yas` menu also offers **Generate HTML release notes** and can be opened without configuration.
 
 ## YAML configuration
 

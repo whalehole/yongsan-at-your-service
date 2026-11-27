@@ -110,9 +110,9 @@ func New(options Options) *cobra.Command {
 	tagOne, tagBatch := a.tagOne(), a.tagBatch()
 	buildOne, buildBatch := a.buildOne(), a.buildBatch()
 	deleteOne, deleteBatch := a.deleteTag(false), a.deleteTag(true)
-	releaseScan := a.releaseScan()
-	releaseCmd := &cobra.Command{Use: "release", Short: "Generate draft release notes from GitLab commits", Args: cobra.NoArgs}
-	releaseCmd.AddCommand(releaseScan)
+	releaseScan, releaseRender := a.releaseScan(), a.releaseRender()
+	releaseCmd := &cobra.Command{Use: "release", Short: "Scan release commits and generate HTML release notes", Args: cobra.NoArgs}
+	releaseCmd.AddCommand(releaseScan, releaseRender)
 	deleteCmd := &cobra.Command{Use: "delete", Short: "Delete a named Git tag", Args: cobra.NoArgs}
 	deleteCmd.AddCommand(deleteOne, deleteBatch)
 	tag.AddCommand(tagOne, tagBatch, deleteCmd)
@@ -129,19 +129,15 @@ func New(options Options) *cobra.Command {
 		if !a.prompt.interactive() {
 			return cmd.Help()
 		}
-		// Check the fixed configuration before asking operation questions.
-		if _, err := a.load(cmd, "", false); err != nil {
-			return err
-		}
 		index, err := a.prompt.choose(cmd.Context(), "Choose an operation:", []string{
 			"Tag one repository", "Tag repositories from config", "Build one Docker image", "Build Docker images from config",
 			"Delete a tag from one repository", "Delete a tag from tagging repositories",
-			"Scan release changes into YAML",
+			"Scan release changes into YAML", "Generate HTML release notes",
 		})
 		if err != nil {
 			return usageError(err)
 		}
-		selected := []*cobra.Command{tagOne, tagBatch, buildOne, buildBatch, deleteOne, deleteBatch, releaseScan}[index]
+		selected := []*cobra.Command{tagOne, tagBatch, buildOne, buildBatch, deleteOne, deleteBatch, releaseScan, releaseRender}[index]
 		selected.SetContext(cmd.Context())
 		return selected.RunE(selected, nil)
 	}
