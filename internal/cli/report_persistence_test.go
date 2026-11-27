@@ -19,7 +19,7 @@ import (
 func TestCanceledBatchReportIncludesQueuedJobsAndSourceReferences(t *testing.T) {
 	workingDirectory(t)
 	var stdout, stderr bytes.Buffer
-	a := &app{options: Options{Out: &stdout, Err: &stderr, Version: "test"}, format: "json", noProgress: true}
+	a := &app{options: Options{Out: &stdout, Err: &stderr, Version: "test", ConfigPath: "yas.yaml"}, format: "json", noProgress: true}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	jobs := []job{
@@ -66,7 +66,7 @@ func (unavailableReportOutput) Write([]byte) (int, error) {
 
 func TestBatchReportSavedEvenWhenStdoutFails(t *testing.T) {
 	workingDirectory(t)
-	a := &app{options: Options{Out: unavailableReportOutput{}, Err: io.Discard}, noProgress: true}
+	a := &app{options: Options{Out: unavailableReportOutput{}, Err: io.Discard, ConfigPath: "yas.yaml"}, noProgress: true}
 	jobs := []job{func(context.Context) result {
 		return result{Project: "group/service", Operation: "build", Image: "service:v1", Status: "built"}
 	}}
@@ -81,8 +81,8 @@ func TestBatchReportSavedEvenWhenStdoutFails(t *testing.T) {
 }
 
 func TestBatchReportWriteFailureStillReturnsOperationResults(t *testing.T) {
-	workingDirectory(t)
-	report, err := reserveBatchReport("broken.html", "tag")
+	directory := workingDirectory(t)
+	report, err := reserveBatchReport(directory, "broken.html", "tag")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,13 +107,13 @@ func TestBatchReportWriteFailureStillReturnsOperationResults(t *testing.T) {
 }
 
 func TestBatchReportReservationsAreUniqueAndPrivate(t *testing.T) {
-	workingDirectory(t)
-	first, err := reserveBatchReport("", "tag")
+	directory := workingDirectory(t)
+	first, err := reserveBatchReport(directory, "", "tag")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.cleanup()
-	second, err := reserveBatchReport("", "tag")
+	second, err := reserveBatchReport(directory, "", "tag")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -38,7 +38,7 @@ func (a *app) releaseScan() *cobra.Command {
 	f.StringVar(&options.Version, "version", "", "Release version label in the draft (default: target tag, branch, or commit)")
 	f.BoolVar(&options.Previous, "previous", false, "Detect the previous existing stable version tag in the same major/minor release line")
 	f.StringArrayVar(&only, "only", nil, "Select a configured project identifier (repeatable)")
-	f.StringVar(&output, "output", "", "New .yaml/.yml draft file (default: release-notes-VERSION.yaml; never overwrites)")
+	f.StringVar(&output, "output", "", "New .yaml/.yml draft file relative to working_directory (default: release-notes-VERSION.yaml; never overwrites)")
 	f.IntVar(&concurrency, "concurrency", 0, "Maximum simultaneous repository scans (default: release.concurrency)")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		cfg, err := a.load(cmd, "", true)
@@ -173,7 +173,11 @@ func (a *app) releaseScan() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		file, err := reserveReleaseOutput(output)
+		outputPath, err := a.resolvePath(output)
+		if err != nil {
+			return usageError(err)
+		}
+		file, err := reserveReleaseOutput(outputPath)
 		if err != nil {
 			return operationError(err)
 		}

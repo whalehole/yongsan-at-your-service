@@ -1,7 +1,10 @@
-# yas reads yas.yaml beside its actual executable, after resolving symlinks.
-# Run yas config init to create that file and print its full path.
+# The executable-side yas.yaml selects working_directory (symlinks are resolved).
+# Run yas config init to create the working directory's yas.yaml and print its path.
 # Replace the example GitLab projects and image names before running jobs.
 version: 1
+# Effective only in executable-side yas.yaml; empty means the executable's directory.
+# Relative paths start from that directory. A redirected config does not redirect again.
+working_directory: ""
 
 gitlab:
   url: https://gitlab.com

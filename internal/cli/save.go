@@ -127,7 +127,7 @@ func (a *app) chooseImageSave(cmd *cobra.Command, options imageSaveOptions) (ima
 		}
 	}
 	if options.enabled {
-		absolute, err := filepath.Abs(options.directory)
+		absolute, err := a.resolvePath(options.directory)
 		if err != nil {
 			return options, fmt.Errorf("resolve save directory: %w", err)
 		}

@@ -46,16 +46,22 @@ type batchReportRun struct {
 
 // Reserve a new destination before any repository jobs run. This also prevents
 // a custom report path from overwriting configuration or an earlier report.
-func reserveBatchReport(path, operation string) (*batchReportRun, error) {
-	directory := "reports"
+func reserveBatchReport(baseDirectory, path, operation string) (*batchReportRun, error) {
+	baseDirectory, err := filepath.Abs(baseDirectory)
+	if err != nil {
+		return nil, fmt.Errorf("resolve batch report working directory: %w", err)
+	}
+	directory := filepath.Join(baseDirectory, "reports")
 	if path != "" {
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(baseDirectory, path)
+		}
 		directory = filepath.Dir(path)
 	}
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return nil, fmt.Errorf("prepare batch report directory: %w", err)
 	}
 	var file *os.File
-	var err error
 	if path == "" {
 		pattern := "yas-" + operation + "-" + time.Now().UTC().Format("20060102T150405Z") + "-*.html"
 		file, err = os.CreateTemp(directory, pattern)
@@ -102,7 +108,11 @@ func (a *app) executeBatch(ctx context.Context, jobs []job, concurrency int, tim
 	if options.disabled {
 		return a.execute(ctx, jobs, concurrency, timeout)
 	}
-	report, err := reserveBatchReport(options.path, operation)
+	location, err := a.location()
+	if err != nil {
+		return operationError(err)
+	}
+	report, err := reserveBatchReport(location.WorkingDirectory, options.path, operation)
 	if err != nil {
 		return operationError(err)
 	}

@@ -66,8 +66,9 @@ func writeRenderFixture(t *testing.T, path string) {
 
 func TestReleaseRenderUsesEditedYAMLWithoutConfigurationOrCredentials(t *testing.T) {
 	workingDirectory(t)
-	// Rendering must not load this file or attempt to authenticate to GitLab.
-	if err := os.WriteFile("yas.yaml", []byte("malformed: [\n"), 0600); err != nil {
+	// The locator may be read for working_directory, but rendering must not
+	// validate these operational GitLab settings or attempt authentication.
+	if err := os.WriteFile("yas.yaml", []byte("version: 1\ngitlab:\n  url: invalid-operational-url\n  token: ''\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	input := filepath.Join("drafts", "release.yaml")
@@ -88,7 +89,7 @@ func TestReleaseRenderUsesEditedYAMLWithoutConfigurationOrCredentials(t *testing
 	if err := json.Unmarshal([]byte(out), &summary); err != nil || summary.GroupBy != "repository" || summary.Repositories != 4 || summary.Commits != 3 || summary.FailedRepositories != 1 || !summary.Draft {
 		t.Fatalf("summary=%s error=%v", out, err)
 	}
-	want, _ := filepath.Abs(filepath.Join("drafts", "release.html"))
+	want, _ := filepath.Abs("release.html")
 	if summary.Output != want || !strings.Contains(logs, want) {
 		t.Fatalf("wrong default output: %s; logs=%q", out, logs)
 	}
@@ -196,7 +197,7 @@ func TestReleaseRenderValidationDoesNotCreateOutput(t *testing.T) {
 func TestReleaseRenderSavedHTMLSurvivesBrokenTerminalOutput(t *testing.T) {
 	workingDirectory(t)
 	writeRenderFixture(t, "release.yaml")
-	command := New(Options{Out: unavailableReportOutput{}, Err: &bytes.Buffer{}})
+	command := New(Options{Out: unavailableReportOutput{}, Err: &bytes.Buffer{}, ConfigPath: "yas.yaml"})
 	command.SetArgs([]string{"release", "render", "--input", "release.yaml"})
 	err := command.ExecuteContext(context.Background())
 	if ExitCode(err) != 1 || !strings.Contains(err.Error(), "output unavailable") {

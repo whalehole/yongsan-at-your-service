@@ -25,8 +25,8 @@ type Options struct {
 	Interactive bool
 	Version     string
 
-	// ConfigPath lets embedded callers supply a configuration location. The
-	// executable leaves it empty to use yas.yaml beside its resolved binary.
+	// ConfigPath lets embedded callers supply the binary-side locator file.
+	// The executable leaves it empty to locate yas.yaml beside its real binary.
 	ConfigPath string
 }
 
@@ -64,10 +64,13 @@ type app struct {
 	noProgress     bool
 	logMu          sync.Mutex
 	buildTargets   map[string]bool
+	locationOnce   sync.Once
+	resolved       config.Location
+	locationErr    error
 }
 
-// New creates an independent command tree. By default, configuration lives
-// beside the resolved yas executable.
+// New creates an independent command tree. Configuration and relative paths
+// use the configured working directory, defaulting to the executable directory.
 func New(options Options) *cobra.Command {
 	if options.In == nil {
 		options.In = os.Stdin
@@ -88,7 +91,7 @@ func New(options Options) *cobra.Command {
 	}
 	root := &cobra.Command{
 		Use: "yas", Short: "Concurrent GitLab tagging, Docker builds, and release scans",
-		Long: "Tag GitLab repositories, build Docker images, and collect release commits from exact revisions.\nConfiguration is stored in yas.yaml beside the resolved yas executable.",
+		Long: "Tag GitLab repositories, build Docker images, and collect release commits from exact revisions.\nRead working_directory from yas.yaml beside the real executable. Configuration and relative paths use that directory, defaulting to the binary's directory.",
 		Args: cobra.NoArgs, SilenceErrors: true, SilenceUsage: true,
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 	}
@@ -156,11 +159,27 @@ func changed(cmd *cobra.Command, name string) bool {
 	return false
 }
 
+func (a *app) location() (config.Location, error) {
+	a.locationOnce.Do(func() {
+		a.resolved, a.locationErr = config.ResolveLocation(a.options.ConfigPath)
+	})
+	return a.resolved, a.locationErr
+}
+
 func (a *app) configPath() (string, error) {
-	if a.options.ConfigPath != "" {
-		return filepath.Abs(a.options.ConfigPath)
+	location, err := a.location()
+	return location.ConfigPath, err
+}
+
+func (a *app) resolvePath(path string) (string, error) {
+	location, err := a.location()
+	if err != nil {
+		return "", err
 	}
-	return config.Path()
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path), nil
+	}
+	return filepath.Join(location.WorkingDirectory, path), nil
 }
 
 func (a *app) loadConfig() (*config.Config, error) {
@@ -647,20 +666,23 @@ func selectProjects(projects, only []string) ([]int, error) {
 }
 
 func (a *app) configCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "config", Short: "Create or validate yas.yaml beside the executable", Args: cobra.NoArgs}
+	cmd := &cobra.Command{Use: "config", Short: "Create or validate yas.yaml in the configured working directory", Args: cobra.NoArgs}
 	cmd.AddCommand(&cobra.Command{
-		Use: "init", Short: "Create yas.yaml beside the executable without overwriting an existing file", Args: cobra.NoArgs,
+		Use: "init", Short: "Create yas.yaml in the working directory without overwriting an existing file", Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			filename, err := a.configPath()
 			if err != nil {
 				return usageError(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(filename), 0700); err != nil {
+				return operationError(fmt.Errorf("prepare configuration directory for %s: %w", filename, err))
 			}
 			file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 			if errors.Is(err, os.ErrExist) {
 				return usageError(fmt.Errorf("%s already exists; it was not overwritten", filename))
 			}
 			if err != nil {
-				return operationError(fmt.Errorf("create configuration beside the executable at %s: %w", filename, err))
+				return operationError(fmt.Errorf("create configuration in the working directory at %s: %w", filename, err))
 			}
 			_, writeErr := io.WriteString(file, config.Example)
 			closeErr := file.Close()
@@ -674,7 +696,7 @@ func (a *app) configCommand() *cobra.Command {
 			return err
 		},
 	}, &cobra.Command{
-		Use: "validate", Short: "Validate yas.yaml beside the executable without contacting GitLab or Docker", Args: cobra.NoArgs,
+		Use: "validate", Short: "Validate the working-directory yas.yaml without contacting GitLab or Docker", Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			cfg, err := a.loadConfig()
 			if err != nil {
@@ -683,7 +705,11 @@ func (a *app) configCommand() *cobra.Command {
 			if err := cfg.Validate(); err != nil {
 				return usageError(err)
 			}
-			_, err = fmt.Fprintln(a.options.Out, "yas.yaml is valid.")
+			filename, err := a.configPath()
+			if err != nil {
+				return usageError(err)
+			}
+			_, err = fmt.Fprintf(a.options.Out, "%s is valid.\n", filename)
 			return err
 		},
 	})

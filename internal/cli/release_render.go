@@ -30,12 +30,12 @@ func (a *app) releaseRender() *cobra.Command {
 	var input, output, groupBy string
 	cmd := &cobra.Command{
 		Use: "render", Short: "Generate standalone HTML release notes from edited release YAML",
-		Long: "Generate HTML release notes from an edited release-scan YAML file.\nThis local operation does not require yas.yaml, a GitLab token, or network access.",
+		Long: "Generate HTML release notes from an edited release-scan YAML file.\nRelative paths use working_directory from the binary-side yas.yaml, or the binary directory by default. No operational configuration, GitLab token, or network access is required.",
 		Args: cobra.NoArgs,
 	}
 	f := cmd.Flags()
-	f.StringVar(&input, "input", "", "Release notes .yaml/.yml file to render")
-	f.StringVar(&output, "output", "", "New .html file (default: input filename with .html extension; never overwrites)")
+	f.StringVar(&input, "input", "", "Release notes .yaml/.yml file to render, relative to working_directory")
+	f.StringVar(&output, "output", "", "New .html file relative to working_directory (default: input basename with .html extension; never overwrites)")
 	f.StringVar(&groupBy, "group-by", string(release.GroupRepository), "Initial grouping: repository, change-request, incident, remarks, or author")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		if a.format != "text" && a.format != "json" {
@@ -63,7 +63,7 @@ func (a *app) releaseRender() *cobra.Command {
 		if err := cmd.Context().Err(); err != nil {
 			return operationError(err)
 		}
-		inputPath, err := filepath.Abs(input)
+		inputPath, err := a.resolvePath(input)
 		if err != nil {
 			return usageError(fmt.Errorf("resolve release notes input: %w", err))
 		}
@@ -86,7 +86,7 @@ func (a *app) releaseRender() *cobra.Command {
 			return usageError(fmt.Errorf("--output must name a new .html file"))
 		}
 		if output == "" {
-			output = strings.TrimSuffix(input, filepath.Ext(input)) + ".html"
+			output = strings.TrimSuffix(filepath.Base(input), filepath.Ext(input)) + ".html"
 			if a.prompt.interactive() {
 				answer, err := a.prompt.line(cmd.Context(), "HTML release notes file ["+output+"] (Enter keeps default)")
 				if err != nil {
@@ -107,7 +107,11 @@ func (a *app) releaseRender() *cobra.Command {
 		if err := cmd.Context().Err(); err != nil {
 			return operationError(err)
 		}
-		destination, err := reserveReleaseOutput(output)
+		outputPath, err := a.resolvePath(output)
+		if err != nil {
+			return usageError(err)
+		}
+		destination, err := reserveReleaseOutput(outputPath)
 		if err != nil {
 			return operationError(err)
 		}

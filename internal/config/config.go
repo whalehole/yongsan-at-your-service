@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bytes"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -25,11 +26,12 @@ const Filename = "yas.yaml"
 var Example string
 
 type Config struct {
-	Version  int            `yaml:"version"`
-	GitLab   GitLabConfig   `yaml:"gitlab"`
-	Tagging  TaggingConfig  `yaml:"tagging"`
-	Building BuildingConfig `yaml:"building"`
-	Release  ReleaseConfig  `yaml:"release"`
+	Version          int            `yaml:"version"`
+	WorkingDirectory string         `yaml:"working_directory"`
+	GitLab           GitLabConfig   `yaml:"gitlab"`
+	Tagging          TaggingConfig  `yaml:"tagging"`
+	Building         BuildingConfig `yaml:"building"`
+	Release          ReleaseConfig  `yaml:"release"`
 }
 
 type GitLabConfig struct {
@@ -123,13 +125,13 @@ func pathForExecutable(executable string) (string, error) {
 	return filepath.Join(filepath.Dir(absolute), Filename), nil
 }
 
-// Load reads yas.yaml beside the real executable. No other location is searched.
+// Load resolves the executable-side locator, then reads the operational config.
 func Load() (*Config, error) {
-	filename, err := Path()
+	location, err := ResolveLocation("")
 	if err != nil {
 		return nil, err
 	}
-	return LoadFile(filename)
+	return LoadFile(location.ConfigPath)
 }
 
 // LoadFile reads the explicitly supplied configuration path without fallback.
@@ -156,6 +158,13 @@ func LoadFile(filename string) (*Config, error) {
 // Parse applies built-in defaults and strictly decodes one YAML document.
 // Validation is separate so commands can apply explicit overrides first.
 func Parse(r io.Reader) (*Config, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("read YAML: %w", err)
+	}
+	if err := validateWorkingDirectoryType(data); err != nil {
+		return nil, err
+	}
 	c := &Config{
 		GitLab:  GitLabConfig{URL: "https://gitlab.com", TokenEnv: "GITLAB_TOKEN"},
 		Tagging: TaggingConfig{Concurrency: 8, Timeout: "2m"},
@@ -170,7 +179,7 @@ func Parse(r io.Reader) (*Config, error) {
 			},
 		},
 	}
-	decoder := yaml.NewDecoder(r)
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&c); err != nil {
 		if errors.Is(err, io.EOF) {
@@ -207,6 +216,9 @@ func (c *Config) Validate() error {
 func (c *Config) ValidateCommon() error {
 	if c.Version != 1 {
 		return errors.New("version must be 1")
+	}
+	if err := validateWorkingDirectory(c.WorkingDirectory); err != nil {
+		return err
 	}
 	for _, group := range c.GitLab.Groups {
 		if err := ValidateProject(group + "/project"); err != nil {

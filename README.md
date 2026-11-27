@@ -15,7 +15,7 @@ go build -o bin/yas ./cmd/yas
 ./bin/yas version
 ```
 
-The examples below use `yas`. Add the built binary's directory to `PATH`, install it in a directory already on `PATH`, or replace `yas` with the absolute path to your binary. You can run it from any directory: configuration lives in `bin/yas.yaml` beside the actual executable, after resolving symlinks. With the build command above, that file is `bin/yas.yaml`.
+The examples below use `yas`. Add the built binary's directory to `PATH`, install it in a directory already on `PATH`, or replace `yas` with the absolute path to your binary. You can run it from any directory: configuration and saved outputs use the configured working directory. This defaults to the actual executable's directory after resolving symlinks, so the build above defaults to `bin/yas.yaml` and outputs under `bin/`.
 
 To embed a release version:
 
@@ -27,7 +27,7 @@ Git does not need to be installed to run `yas`: repository operations use GitLab
 
 ## Quick start
 
-Build or install the executable first, then run the following from any directory:
+Build or install the executable first, then run the following from any directory. To use a separate working directory, configure it as described below before running `config init`.
 
 ```bash
 yas config init
@@ -46,21 +46,31 @@ yas tag batch --branch release/1.2
 yas build batch --tag v1.2.0
 ```
 
-`config init` creates a commented example beside the executable, prints its full path, and refuses to overwrite an existing file. Replace the example project identifiers before performing operations. You can also use [yas.example.yaml](yas.example.yaml) as a reference.
+`config init` creates the working directory and a commented `yas.yaml` example there, prints the full file path, and refuses to overwrite an existing file. Replace the example project identifiers before performing operations. You can also use [yas.example.yaml](yas.example.yaml) as a reference.
 
-### The fixed configuration file
+### Working directory and configuration
 
-Tagging, builds, release scans, and configuration validation use `bin/yas.yaml` in the actual executable's directory. For example, `/tools/yas` uses `/tools/yas.yaml`; invoking a symlink to `/tools/yas` uses that same file. There is no `--config` option, working-directory or parent-directory fallback, or prompt for an alternative filename. A missing file produces an error directing you to `yas config init`.
+The `yas.yaml` beside the actual executable selects the working directory through top-level `working_directory`. When that file is absent or its setting is empty, the executable's directory is used. For `/tools/yas`, the default configuration is `/tools/yas.yaml`; invoking a symlink uses the resolved executable's location.
 
-Move or copy an existing configuration beside the executable manually; the application does not migrate it automatically. Use a built executable for initialization and normal runs: `go run` creates a temporary executable, so its configuration location is also temporary.
+To keep operational configuration and output files under `/data/yas`, first create this locator beside the executable:
 
-Relative output paths use the current working directory: default batch reports go under `./reports`, image archive batches under `./images`, and release drafts use `release-notes-<version>.yaml`. Explicit report, archive-parent, and release-draft paths retain their respective command meanings.
+```yaml
+# /tools/yas.yaml, beside /tools/yas
+version: 1
+working_directory: /data/yas
+```
 
-`yas config init`, `yas help`, command-specific `--help`, `yas version`, `yas release render`, and the interactive root operation menu work without a configuration file. Selecting an operation that uses configuration still loads its required file. `yas config validate` needs the file but contacts neither GitLab nor Docker and does not require a token.
+Then run `/tools/yas config init`. It creates `/data/yas/yas.yaml`, where you configure GitLab access and repository lists. Tagging, builds, release scans, and configuration validation load that operational file. If you already have a configuration, move or copy it into the working directory manually; the application does not migrate it automatically, and initialization never overwrites it.
+
+A relative `working_directory` is resolved from the executable's directory. Only the executable-side file selects the location; a `working_directory` value in the operational file does not redirect again. There is no `--config` option, invocation-directory or parent-directory search, or prompt for an alternative configuration filename. A missing operational file directs you to `yas config init`.
+
+All relative local input/output paths are resolved from the configured working directory. Default batch reports use `reports/`, image archives use `images/<batch-id>/`, and release drafts use `release-notes-<version>.yaml` there. Absolute paths are honored. Repository build contexts and Dockerfile paths retain their repository-relative meanings.
+
+Use a built executable for initialization and normal runs: `go run` creates a temporary executable, which also changes the default working directory. Help, version, and the interactive root menu do not require operational configuration. `config init` creates it; `config validate` checks it locally without a token. Release rendering also needs no operational configuration or token, but reads the executable-side locator if present to find the working directory; malformed locator YAML is reported as an error.
 
 ## GitLab authentication
 
-Put your access token directly in `bin/yas.yaml`:
+Put your access token directly in the working directory's operational `yas.yaml`:
 
 ```yaml
 gitlab:
@@ -68,7 +78,7 @@ gitlab:
   token: "your-gitlab-access-token"
 ```
 
-A nonempty `gitlab.token` takes precedence over environment authentication. Keep your local `bin/yas.yaml` private; it is already excluded by this repository's `.gitignore`.
+A nonempty `gitlab.token` takes precedence over environment authentication. Keep the operational configuration private and out of version control.
 
 Alternatively, leave `token` empty and use `gitlab.token_env` to name an environment variable containing the token (default: `GITLAB_TOKEN`). The CLI does not prompt for a token or load `.env` files automatically.
 
@@ -117,7 +127,7 @@ gitlab:
 | `yas build batch` | Build selected entries from `building.repositories` |
 | `yas release scan` | Collect new release commits across selected repositories and write an editable YAML draft |
 | `yas release render` | Turn completed release-notes YAML into standalone HTML with selectable grouping |
-| `yas config init` | Create the example `bin/yas.yaml` beside the executable without overwriting a file |
+| `yas config init` | Create the working directory's example `yas.yaml` without overwriting a file |
 | `yas config validate` | Validate the entire configuration locally |
 | `yas help [command]` | Display help, such as `yas help tag one` |
 | `yas version` | Print the application version |
@@ -186,7 +196,7 @@ yas tag one --project my-group/service-a --branch main
 
 `yas build one` prompts for the project, source type (Git tag or commit), source value, and an optional output image override (Enter accepts the generated name). Optional settings use configuration or built-in defaults; the CLI does not ask you to fill every optional field.
 
-Batch commands obtain repository details from their own configuration list and do not prompt for missing repository fields. A missing or invalid `bin/yas.yaml` is reported before operation prompts begin.
+Batch commands obtain repository details from their own configuration list and do not prompt for missing repository fields. A missing or invalid operational `yas.yaml` is reported before operation prompts begin.
 
 For CI and scripts, provide all required flags and use `--non-interactive`. Missing values produce an error instead of waiting for input. This behavior also applies automatically when standard input is not a terminal; piping answers into a command does not enable prompts.
 
@@ -417,7 +427,7 @@ Both build commands accept:
 | `--no-cache[=true\|false]` | Disable or enable Docker build-cache reuse |
 | `--pull[=true\|false]` | Control refreshing referenced base images |
 | `--save[=true\|false]` | Save each successfully built image as a Docker `.tar` archive; default `false` |
-| `--save-dir PATH` | Parent directory for image archive batches; default `./images`; does not enable saving by itself |
+| `--save-dir PATH` | Parent directory for image archive batches; default `images/` under the working directory; does not enable saving by itself |
 
 On batch builds, explicit build flags apply to every selected entry. Build arguments are ordinary build configuration, not a mechanism for supplying secrets.
 
@@ -432,9 +442,9 @@ yas build batch --tag v1.2.0 --save --save-dir ./release-images
 docker load --input /path/to/release-images/20261125T093000.123456789Z/service-a_v1.2.0.tar
 ```
 
-Interactive builds ask once, after the other build prompts, `Save built images as .tar files after build? [y/N]`. Enter or `no` leaves saving disabled. An explicit `--save` or `--save=false` bypasses this prompt. Non-interactive builds save only when `--save` is enabled; `--save-dir` selects the destination without enabling saves.
+Interactive builds ask once, after the other build prompts, `Save built images as .tar files after build? [y/N]`. Enter or `no` leaves saving disabled. An explicit `--save` or `--save=false` bypasses this prompt. Non-interactive builds save only when `--save` is enabled; `--save-dir` selects the destination without enabling saves. Relative save directories are resolved from the configured working directory.
 
-Each build invocation gets one unique archive batch ID based on UTC time, in the form `YYYYMMDDTHHMMSS.nnnnnnnnnZ`. All its saved images go into that subdirectory under `--save-dir`, including for a single-image build. Repeated runs use different subdirectories:
+Each build invocation gets one unique archive batch ID based on UTC time, in the form `YYYYMMDDTHHMMSS.nnnnnnnnnZ`. All its saved images go into that subdirectory under `--save-dir`, including for a single-image build. Repeated runs use different subdirectories; the default layout within the working directory is:
 
 ```text
 images/
@@ -476,7 +486,7 @@ GitLab imposes archive and API rate limits. Concurrency is a maximum number of a
 
 ## Scan changes for release notes
 
-`yas release scan` reads `release.repositories` in `bin/yas.yaml`, collects commits reachable from the target release that are absent from the baseline history, and writes an editable YAML release-notes draft for human completion. It makes no Git changes, creates no tags, and does not invoke Docker.
+`yas release scan` reads `release.repositories` in the working directory's operational `yas.yaml`, collects commits reachable from the target release that are absent from the baseline history, and writes an editable YAML release-notes draft for human completion. It makes no Git changes, creates no tags, and does not invoke Docker.
 
 Configure the components to include in release notes:
 
@@ -509,7 +519,7 @@ With `--previous`, the target must be an existing stable semantic-version tag su
 
 `--group`, `--all-groups`, and repeatable `--only PROJECT` select components from `release.repositories`. Interactive group choices come from those project paths. A group matches the exact full namespace, excluding nested subgroups and similarly named groups. Selection happens before GitLab requests, so unselected repositories are not scanned. `--concurrency` and `--timeout` override `release.concurrency` and `release.timeout`, which default to `8` and `2m`.
 
-In an interactive terminal, omitted source and output choices are prompted for after repository selection. The root `yas` operation menu also offers release scanning. Non-interactive scans require a target and either `--from` or `--previous`. The default output is `release-notes-<version>.yaml`; `--output` accepts a new `.yaml` or `.yml` path and creates missing parent directories. Existing files are never overwritten, and the destination is reserved before scanning. The file uses permissions `0600`.
+In an interactive terminal, omitted source and output choices are prompted for after repository selection. The root `yas` operation menu also offers release scanning. Non-interactive scans require a target and either `--from` or `--previous`. The default output is `release-notes-<version>.yaml` under the working directory; `--output` accepts a new `.yaml` or `.yml` path and creates missing parent directories. Relative paths start from the working directory, and absolute paths are honored. Existing files are never overwritten, and the destination is reserved before scanning. The file uses permissions `0600`.
 
 The YAML document contains:
 
@@ -550,13 +560,14 @@ A missing/inaccessible tag, denied request, timed-out listing, or incomplete pag
 After completing the editable YAML, generate a standalone HTML document from that file:
 
 ```bash
-# Default: writes drafts/release-notes-2.2.8.html beside the input:
+# Default: reads working-directory/drafts/release-notes-2.2.8.yaml
+# and writes working-directory/release-notes-2.2.8.html:
 yas release render --input drafts/release-notes-2.2.8.yaml
 # Choose the output file and initial grouping:
 yas release render --input drafts/release-notes-2.2.8.yaml --output releases/2.2.8.html --group-by change-request
 ```
 
-Rendering uses only the input YAML; it requires no configuration file, GitLab token, Docker, or network connection. The YAML is not rewritten. The HTML includes the completed commit information, identifiers, remarks, release metadata, unchanged components, and any scan failures. It displays the input's `release.draft` value as provided; rendering does not clear that flag.
+Rendering needs no operational configuration, GitLab token, Docker, or network connection. It reads the executable-side locator if present to find the working directory; invalid locator YAML is an error. Relative input paths start from that directory, and absolute input paths are honored. Release content comes from the selected input YAML, which is not rewritten. The HTML includes the completed commit information, identifiers, remarks, release metadata, unchanged components, and any scan failures. It displays the input's `release.draft` value as provided; rendering does not clear that flag.
 
 Open the HTML in a browser to read it offline or print it. A dropdown switches between all five views without generating another file. `--group-by` selects the initial view and defaults to `repository`:
 
@@ -570,14 +581,15 @@ Open the HTML in a browser to read it offline or print it. A dropdown switches b
 
 Missing identifiers, remarks, and authors have explicit buckets so those commits remain visible. Remarks are not trimmed, case-folded, or otherwise normalized when grouping.
 
-Without `--output`, HTML replaces the input filename's `.yaml` or `.yml` extension with `.html` in the same directory. An explicit relative output path is resolved from the current working directory. Existing files are never overwritten, and the new HTML file uses permissions `0600`.
+Without `--output`, HTML uses the input file's basename with a `.html` extension in the configured working directory, even when the input is in another directory. For example, `/archive/release.yaml` produces `<working-directory>/release.html`. An explicit relative output path also starts from the working directory; absolute output paths are honored. Existing files are never overwritten, and the new HTML file uses permissions `0600`.
 
-In an interactive terminal, `yas release render` prompts for an omitted input path, the initial grouping, and an output path with its default. The root `yas` menu also offers **Generate HTML release notes** and can be opened without configuration.
+In an interactive terminal, `yas release render` prompts for an omitted input path, the initial grouping, and an output path with its default. The root `yas` menu also offers **Generate HTML release notes** and can be opened without operational configuration.
 
 ## YAML configuration
 
 ```yaml
 version: 1
+working_directory: ""
 
 gitlab:
   url: https://gitlab.com
@@ -617,6 +629,7 @@ The lists are independent: this example tags services A and B, builds services A
 | Field | Default / behavior |
 | --- | --- |
 | `version` | Required; must be `1` |
+| `working_directory` | Empty by default, using the resolved executable's directory; set only in executable-side `yas.yaml` to choose the workspace; relative values start from the executable's directory |
 | `gitlab.url` | `https://gitlab.com` |
 | `gitlab.insecure_skip_verify` | `false`; enable explicitly to skip GitLab TLS certificate verification |
 | `gitlab.token` | Optional access token stored directly in the config; takes precedence over environment authentication |
@@ -714,7 +727,7 @@ The final result table/JSON remains in configuration order; live progress follow
 
 ## Batch reports
 
-`yas tag batch`, `yas tag delete batch`, and `yas build batch` automatically save a standalone HTML report in `./reports/`, including when selected repository jobs fail or the run is canceled. Each default filename contains the operation, a timestamp, and a unique suffix. Open the file in a browser to read, share, or print/save it as a PDF; it needs no internet connection or additional software to render beyond the browser. Single-repository commands do not create reports.
+`yas tag batch`, `yas tag delete batch`, and `yas build batch` automatically save a standalone HTML report in `reports/` under the configured working directory, including when selected repository jobs fail or the run is canceled. Each default filename contains the operation, a timestamp, and a unique suffix. Open the file in a browser to read, share, or print/save it as a PDF; it needs no internet connection or additional software to render beyond the browser. Single-repository commands do not create reports.
 
 Each report includes:
 
@@ -726,7 +739,7 @@ Each report includes:
 `created`, `deleted`, and `built` count as **passed**. `skipped` and `planned` remain separate: a skipped job made no change, and a planned dry-run job did not execute the operation. Dry-run reports describe the checks performed and do not prove that a later build or tag write will succeed. Reports contain result details rather than raw Docker logs, configuration contents, environment variables, command-line arguments, or build arguments.
 
 ```bash
-# Save automatically in ./reports/:
+# Save automatically in the working directory's reports/ folder:
 yas build batch --tag v1.2.0
 # Choose a new report file; missing parent directories are created:
 yas tag batch --branch release/1.2 --report reports/release-1.2.html
@@ -736,7 +749,7 @@ yas build batch --tag v1.2.0 --format json > results.json
 yas tag delete batch --tag old-release --no-report
 ```
 
-`--report` accepts an absolute path or a path relative to the current working directory and requires a `.html` extension. Existing files are never overwritten. `--report` and `--no-report` cannot be used together when reporting is disabled. The saved report path is printed to stderr, including with `--no-progress`, so text/JSON stdout retains its existing format.
+`--report` accepts an absolute path or a path relative to the configured working directory and requires a `.html` extension. Existing files are never overwritten. `--report` and `--no-report` cannot be used together when reporting is disabled. The saved report path is printed to stderr, including with `--no-progress`, so text/JSON stdout retains its existing format.
 
 The report destination is reserved before jobs run; an unavailable destination stops execution before any repository operation starts. Configuration, validation, or prompt errors before execution do not create reports. Once jobs run, their results are saved before terminal output or the final failure is returned. A report-writing failure returns exit code `1` even if the repository operations succeeded; completed operations are not rolled back.
 
