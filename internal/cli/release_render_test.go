@@ -89,7 +89,7 @@ func TestReleaseRenderUsesEditedYAMLWithoutConfigurationOrCredentials(t *testing
 	if err := json.Unmarshal([]byte(out), &summary); err != nil || summary.GroupBy != "repository" || summary.Repositories != 4 || summary.Commits != 3 || summary.FailedRepositories != 1 || !summary.Draft {
 		t.Fatalf("summary=%s error=%v", out, err)
 	}
-	want, _ := filepath.Abs("release.html")
+	want, _ := filepath.Abs(filepath.Join(filepath.FromSlash(releaseHTMLDirectory), "release.html"))
 	if summary.Output != want || !strings.Contains(logs, want) {
 		t.Fatalf("wrong default output: %s; logs=%q", out, logs)
 	}
@@ -150,13 +150,17 @@ func TestReleaseRenderInteractiveCommandAndRootMenuWithoutConfig(t *testing.T) {
 		input string
 		group string
 	}{
-		{name: "direct accepts default", args: []string{"release", "render", "--format", "json"}, input: "release.yaml\n\n\n", group: "repository"},
-		{name: "root chooses remarks", args: []string{"--format", "json"}, input: "8\nrelease.yaml\n4\n\n", group: "remarks"},
+		{name: "direct accepts default", args: []string{"release", "render", "--format", "json"}, input: " \n\n\n", group: "repository"},
+		{name: "root chooses remarks", args: []string{"--format", "json"}, input: "8\n \n4\n\n", group: "remarks"},
 		{name: "explicit options bypass prompts", args: []string{"release", "render", "--input", "release.yaml", "--group-by", "author", "--output", "release.html", "--format", "json"}, group: "author"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			workingDirectory(t)
-			writeRenderFixture(t, "release.yaml")
+			path := "release.yaml"
+			if tc.input != "" {
+				path = filepath.Join(filepath.FromSlash(releaseYAMLDirectory), path)
+			}
+			writeRenderFixture(t, path)
 			out, logs, err := executeTest(tc.args, tc.input, true)
 			var result struct {
 				GroupBy string `json:"group_by"`
@@ -187,7 +191,7 @@ func TestReleaseRenderValidationDoesNotCreateOutput(t *testing.T) {
 			if ExitCode(err) != 2 {
 				t.Fatalf("args=%v error=%v", args, err)
 			}
-			if _, err := os.Stat("release.html"); !os.IsNotExist(err) {
+			if _, err := os.Stat(filepath.FromSlash(releaseHTMLDirectory)); !os.IsNotExist(err) {
 				t.Fatalf("invalid invocation created output: %v", err)
 			}
 		})
@@ -203,7 +207,7 @@ func TestReleaseRenderSavedHTMLSurvivesBrokenTerminalOutput(t *testing.T) {
 	if ExitCode(err) != 1 || !strings.Contains(err.Error(), "output unavailable") {
 		t.Fatalf("terminal error=%v", err)
 	}
-	if data, err := os.ReadFile("release.html"); err != nil || !strings.Contains(string(data), "Release 2.2.8") {
+	if data, err := os.ReadFile(filepath.Join(filepath.FromSlash(releaseHTMLDirectory), "release.html")); err != nil || !strings.Contains(string(data), "Release 2.2.8") {
 		t.Fatalf("saved HTML was lost: %v", err)
 	}
 }

@@ -370,7 +370,7 @@ func TestReleaseScanInteractiveSelectionThroughDirectCommandAndRootMenu(t *testi
 			if err != nil {
 				t.Fatal(err)
 			}
-			draft := readReleaseDraft(t, "release-notes-2.2.8.yaml")
+			draft := readReleaseDraft(t, filepath.Join(filepath.FromSlash(releaseYAMLDirectory), "release-notes-2.2.8.yaml"))
 			if len(draft.Components) != 1 || draft.Components[0].Project != "alpha/changed" || draft.Components[0].FromRef != "2.2.7" || draft.Components[0].ToRef != "2.2.8" {
 				t.Fatalf("interactive choices were not respected: %#v", draft)
 			}

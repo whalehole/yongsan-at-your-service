@@ -64,7 +64,7 @@ Then run `/tools/yas config init`. It creates `/data/yas/yas.yaml`, where you co
 
 A relative `working_directory` is resolved from the executable's directory. Only the executable-side file selects the location; a `working_directory` value in the operational file does not redirect again. There is no `--config` option, invocation-directory or parent-directory search, or prompt for an alternative configuration filename. A missing operational file directs you to `yas config init`.
 
-All relative local input/output paths are resolved from the configured working directory. Default batch reports use `reports/`, image archives use `images/<batch-id>/`, and release drafts use `release-notes-<version>.yaml` there. Absolute paths are honored. Repository build contexts and Dockerfile paths retain their repository-relative meanings.
+Relative command-line input/output paths are resolved from the configured working directory. Default batch reports use `reports/`, image archives use `images/<batch-id>/`, release drafts use `release-notes/yaml/`, and rendered release HTML uses `release-notes/html/` there. Absolute paths are honored. Repository build contexts and Dockerfile paths retain their repository-relative meanings.
 
 Use a built executable for initialization and normal runs: `go run` creates a temporary executable, which also changes the default working directory. Help, version, and the interactive root menu do not require operational configuration. `config init` creates it; `config validate` checks it locally without a token. Release rendering also needs no operational configuration or token, but reads the executable-side locator if present to find the working directory; malformed locator YAML is reported as an error.
 
@@ -126,7 +126,7 @@ gitlab:
 | `yas build one` | Build one image from a commit or Git tag |
 | `yas build batch` | Build selected entries from `building.repositories` |
 | `yas release scan` | Collect new release commits across selected repositories and write an editable YAML draft |
-| `yas release render` | Turn completed release-notes YAML into standalone HTML with selectable grouping |
+| `yas release render` | Turn selected release-notes YAML files into individual HTML documents with selectable grouping |
 | `yas config init` | Create the working directory's example `yas.yaml` without overwriting a file |
 | `yas config validate` | Validate the entire configuration locally |
 | `yas help [command]` | Display help, such as `yas help tag one` |
@@ -504,7 +504,7 @@ This list is required for release scanning and is independent of the other opera
 
 ```bash
 # Collect commits added since the baseline release tag:
-yas release scan --from 2.2.7 --to 2.2.8 --output drafts/release-2.2.8.yaml
+yas release scan --from 2.2.7 --to 2.2.8
 # Detect each repository's previous stable version automatically:
 yas release scan --to 2.2.8 --previous --group my-group
 # Select an individual configured component:
@@ -519,7 +519,7 @@ With `--previous`, the target must be an existing stable semantic-version tag su
 
 `--group`, `--all-groups`, and repeatable `--only PROJECT` select components from `release.repositories`. Interactive group choices come from those project paths. A group matches the exact full namespace, excluding nested subgroups and similarly named groups. Selection happens before GitLab requests, so unselected repositories are not scanned. `--concurrency` and `--timeout` override `release.concurrency` and `release.timeout`, which default to `8` and `2m`.
 
-In an interactive terminal, omitted source and output choices are prompted for after repository selection. The root `yas` operation menu also offers release scanning. Non-interactive scans require a target and either `--from` or `--previous`. The default output is `release-notes-<version>.yaml` under the working directory; `--output` accepts a new `.yaml` or `.yml` path and creates missing parent directories. Relative paths start from the working directory, and absolute paths are honored. Existing files are never overwritten, and the destination is reserved before scanning. The file uses permissions `0600`.
+In an interactive terminal, omitted source and output choices are prompted for after repository selection. The root `yas` operation menu also offers release scanning. Non-interactive scans require a target and either `--from` or `--previous`. The default output is `release-notes/yaml/release-notes-<version>.yaml` under the working directory; `--output` accepts a new `.yaml` or `.yml` path and creates missing parent directories. Explicit relative paths start from the working directory, and absolute paths are honored. Existing files are never overwritten, and the destination is reserved before scanning. The file uses permissions `0600`. Existing drafts are not moved automatically; files outside the default YAML folder can be selected manually when rendering or supplied through `--input`.
 
 The YAML document contains:
 
@@ -557,17 +557,29 @@ A missing/inaccessible tag, denied request, timed-out listing, or incomplete pag
 
 ## Render release notes as HTML
 
-After completing the editable YAML, generate a standalone HTML document from that file:
+After completing the editable YAML, generate one standalone HTML document per selected file:
 
 ```bash
-# Default: reads working-directory/drafts/release-notes-2.2.8.yaml
-# and writes working-directory/release-notes-2.2.8.html:
-yas release render --input drafts/release-notes-2.2.8.yaml
-# Choose the output file and initial grouping:
-yas release render --input drafts/release-notes-2.2.8.yaml --output releases/2.2.8.html --group-by change-request
+# Interactively select recent drafts from release-notes/yaml/:
+yas release render
+# Render one explicit input to release-notes/html/release-notes-2.2.8.html:
+yas release render --input release-notes/yaml/release-notes-2.2.8.yaml
+# Render several files into a shared output folder:
+yas release render \
+  --input release-notes/yaml/release-notes-2.2.8.yaml \
+  --input release-notes/yaml/release-notes-2.2.9.yaml \
+  --output-dir releases/html --group-by change-request --non-interactive
+# A single file can use a custom HTML filename:
+yas release render --input /archive/release.yaml --output releases/custom.html
 ```
 
-Rendering needs no operational configuration, GitLab token, Docker, or network connection. It reads the executable-side locator if present to find the working directory; invalid locator YAML is an error. Relative input paths start from that directory, and absolute input paths are honored. Release content comes from the selected input YAML, which is not rewritten. The HTML includes the completed commit information, identifiers, remarks, release metadata, unchanged components, and any scan failures. It displays the input's `release.draft` value as provided; rendering does not clear that flag.
+Without `--input`, an interactive terminal shows a checkbox picker for the latest ten drafts in the working directory's `release-notes/yaml/` folder. Use **Up/Down** to move, **Space** to toggle a file, and **Enter** to confirm. No files are preselected. Discovery includes only direct regular `.yaml`/`.yml` files, excludes symlinks and nested folders, and sorts by modification time newest first, with filename as the tie-breaker. Candidates are parsed after selection, so invalid YAML may appear in the list and then be reported as a per-file failure.
+
+The picker also has a manual-path row that adds one path to the checked files; duplicate selections are removed. A relative manually entered filename starts from `release-notes/yaml/`, and an absolute path can select a file elsewhere. If the draft folder is missing, empty, or unreadable, the command explains this and falls back to manual entry.
+
+Explicit `--input` is repeatable and preserves command-line path semantics: relative paths start from the configured working directory, and absolute paths are honored. Non-interactive rendering requires at least one `--input`.
+
+Rendering needs no operational configuration, GitLab token, Docker, or network connection. It reads the executable-side locator if present to find the working directory; invalid locator YAML is an error. Each selected YAML produces its own HTML document, without merging releases or rewriting the inputs. Each document includes its completed commit information, identifiers, remarks, release metadata, unchanged components, and any scan failures. It displays the input's `release.draft` value as provided; rendering does not clear that flag.
 
 Open the HTML in a browser to read it offline or print it. A dropdown switches between all five views without generating another file. `--group-by` selects the initial view and defaults to `repository`:
 
@@ -581,9 +593,11 @@ Open the HTML in a browser to read it offline or print it. A dropdown switches b
 
 Missing identifiers, remarks, and authors have explicit buckets so those commits remain visible. Remarks are not trimmed, case-folded, or otherwise normalized when grouping.
 
-Without `--output`, HTML uses the input file's basename with a `.html` extension in the configured working directory, even when the input is in another directory. For example, `/archive/release.yaml` produces `<working-directory>/release.html`. An explicit relative output path also starts from the working directory; absolute output paths are honored. Existing files are never overwritten, and the new HTML file uses permissions `0600`.
+The default output folder is `release-notes/html/` under the working directory. Each output uses its input's basename with a `.html` extension: `/archive/release.yaml` produces `<working-directory>/release-notes/html/release.html`. `--output-dir PATH` selects a shared output folder; a relative folder starts from the working directory, and an absolute folder is honored. `--output PATH` selects a filename for a single input only and is mutually exclusive with `--output-dir`. Existing files are never overwritten, and new HTML files use permissions `0600`.
 
-In an interactive terminal, `yas release render` prompts for an omitted input path, the initial grouping, and an output path with its default. The root `yas` menu also offers **Generate HTML release notes** and can be opened without operational configuration.
+Interactive rendering asks for the grouping once and applies it to all selected files. A single input retains the HTML-filename prompt; multiple inputs receive one shared output-folder prompt. Enter accepts the respective default. Supplying `--output-dir` skips output prompting. The root `yas` menu also offers **Generate HTML release notes** and can be opened without operational configuration.
+
+Rendering continues after individual read/parse failures or existing output files, preserving successful documents and returning exit code `1` when any input fails. If selected inputs would create the same output basename, all colliding selections fail before writing their HTML files; other inputs still proceed. With `--format json`, multiple inputs produce an ordered array of per-file results including input/output paths, status, error, and release counts/metadata. A single input keeps the existing JSON summary object.
 
 ## YAML configuration
 

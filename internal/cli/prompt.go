@@ -13,6 +13,7 @@ import (
 
 type prompter struct {
 	reader      *bufio.Reader
+	input       io.Reader
 	out         io.Writer
 	interactive func() bool
 }

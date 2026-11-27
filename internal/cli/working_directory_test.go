@@ -101,7 +101,7 @@ func TestWorkingDirectoryRoutesReleaseInputAndAllOutputChoices(t *testing.T) {
 	for _, tc := range []struct {
 		name, input, output, want string
 	}{
-		{name: "default", input: filepath.Join("drafts", "release.yaml"), want: filepath.Join(workspace, "release.html")},
+		{name: "default", input: filepath.Join("drafts", "release.yaml"), want: filepath.Join(workspace, filepath.FromSlash(releaseHTMLDirectory), "release.html")},
 		{name: "relative output", input: filepath.Join("drafts", "release.yaml"), output: filepath.Join("published", "notes.html"), want: filepath.Join(workspace, "published", "notes.html")},
 		{name: "absolute output", input: input, output: filepath.Join(root, "explicit", "notes.html"), want: filepath.Join(root, "explicit", "notes.html")},
 	} {
@@ -128,7 +128,7 @@ func TestWorkingDirectoryRoutesReleaseInputAndAllOutputChoices(t *testing.T) {
 	if _, _, err := workspaceCommand(t, bootstrap, "release", "render", "--input", external); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(workspace, "external-release.html")); err != nil {
+	if _, err := os.Stat(filepath.Join(workspace, filepath.FromSlash(releaseHTMLDirectory), "external-release.html")); err != nil {
 		t.Fatalf("default HTML did not use working directory for external input: %v", err)
 	}
 	for _, unexpected := range []string{
@@ -154,7 +154,7 @@ func TestWorkingDirectoryDefaultsLocalRenderingToBinaryDirectory(t *testing.T) {
 	if _, _, err := workspaceCommand(t, bootstrap, "release", "render", "--input", "release.yaml"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(binaryDirectory, "release.html")); err != nil {
+	if _, err := os.Stat(filepath.Join(binaryDirectory, filepath.FromSlash(releaseHTMLDirectory), "release.html")); err != nil {
 		t.Fatalf("default output did not use binary directory: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(caller, "release.html")); !os.IsNotExist(err) {
@@ -181,7 +181,7 @@ func TestWorkingDirectoryRoutesReleaseScanDraft(t *testing.T) {
 	if _, _, err := workspaceCommand(t, bootstrap, "release", "scan", "--from", "2.2.7", "--to", "2.2.8", "--no-progress"); err != nil {
 		t.Fatal(err)
 	}
-	draft := readReleaseDraft(t, filepath.Join(workspace, "release-notes-2.2.8.yaml"))
+	draft := readReleaseDraft(t, filepath.Join(workspace, filepath.FromSlash(releaseYAMLDirectory), "release-notes-2.2.8.yaml"))
 	if len(draft.Components) != 1 || draft.Components[0].Status != "changed" {
 		t.Fatalf("wrong operational scan result: %+v", draft)
 	}

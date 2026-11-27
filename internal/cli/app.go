@@ -86,7 +86,7 @@ func New(options Options) *cobra.Command {
 	}
 	a := &app{options: options}
 	a.prompt = &prompter{
-		reader: bufio.NewReader(options.In), out: options.Err,
+		reader: bufio.NewReader(options.In), input: options.In, out: options.Err,
 		interactive: func() bool { return options.Interactive && !a.nonInteractive },
 	}
 	root := &cobra.Command{
