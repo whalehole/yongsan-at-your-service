@@ -183,7 +183,7 @@ func TestRenderHTMLMissingBucketsRemainDistinctFromLiteralRemarks(t *testing.T) 
 	document := htmlFixture()
 	document.Components[0].Commits[0].Remarks = "No remarks"
 	output := viewHTML(t, renderTestHTML(t, document, GroupRemarks), GroupRemarks)
-	if strings.Count(output, `class="group-value">No remarks</h3>`) != 2 || !strings.Contains(output, `class="group-kicker">Not provided</p>`) {
+	if strings.Count(output, `class="group-value">No remarks</h3>`) != 2 || !strings.Contains(output, `class="group-kicker">Remarks · Not provided</p>`) {
 		t.Error("literal remarks and the missing-remarks bucket were merged or lost")
 	}
 }
