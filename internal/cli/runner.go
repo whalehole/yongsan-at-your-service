@@ -90,7 +90,10 @@ func writeResults(out io.Writer, format string, results []result) error {
 	}
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	imageDeletion := len(results) > 0 && results[0].Operation == "image-delete"
-	if imageDeletion {
+	repositoryLookup := results[0].Operation == "repo-list"
+	if repositoryLookup {
+		fmt.Fprintln(w, "REPOSITORY\tSTATUS\tTAG\tCOMMIT\tTITLE")
+	} else if imageDeletion {
 		fmt.Fprintln(w, "IMAGE REPOSITORY\tSTATUS\tIMAGE ID\tIMAGE")
 	} else {
 		fmt.Fprintln(w, "PROJECT\tSTATUS\tCOMMIT\tTARGET")
@@ -107,7 +110,27 @@ func writeResults(out io.Writer, format string, results []result) error {
 		if imageDeletion {
 			identifier = r.ImageID
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.Project, r.Status, identifier, target)
+		if repositoryLookup {
+			status, title := r.Status, ""
+			if status == "skipped" {
+				status = "absent"
+			}
+			if r.Commit != "" {
+				title = r.CommitTitle
+				if strings.TrimSpace(title) == "" {
+					title = "Commit title unavailable"
+				}
+				title = strings.Map(func(char rune) rune {
+					if char < 32 || char == 127 || char == '\u2028' || char == '\u2029' {
+						return ' '
+					}
+					return char
+				}, title)
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Project, status, r.Tag, r.Commit, title)
+		} else {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.Project, r.Status, identifier, target)
+		}
 		if r.SaveStatus != "" {
 			requestedSaves++
 			saveCounts[r.SaveStatus]++
@@ -127,6 +150,17 @@ func writeResults(out io.Writer, format string, results []result) error {
 		counts[r.Status]++
 	}
 	if err := w.Flush(); err != nil {
+		return err
+	}
+	if repositoryLookup {
+		_, err := fmt.Fprintf(out, "\n%d checked; %d found, %d absent, %d failed.\n", len(results), counts["found"], counts["skipped"], counts["failed"])
+		if err == nil && counts["found"] == 0 {
+			message := "No checked repositories contain the selected Git tag.\n"
+			if counts["failed"] > 0 {
+				message = "No matching repositories were confirmed; tag presence remains unknown for failed lookups.\n"
+			}
+			_, err = io.WriteString(out, message)
+		}
 		return err
 	}
 	_, err := fmt.Fprintf(out, "\n%d total; %d created, %d deleted, %d built, %d skipped, %d planned, %d failed.\n",

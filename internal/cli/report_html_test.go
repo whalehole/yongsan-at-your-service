@@ -551,3 +551,101 @@ func TestBatchHTMLReportKeepsGitLabColumnsForExistingOperations(t *testing.T) {
 		t.Error("existing GitLab report acquired image-deletion-only fields")
 	}
 }
+
+func TestBatchHTMLReportRepositoryLookupShowsReadOnlyCoverageAndMatchedCommit(t *testing.T) {
+	report := exampleBatchReport()
+	report.Operation, report.Selection = "repo-list", `Group = "team"; Git tag = "release-v2"`
+	report.Results = repositoryLookupPresentationResults()
+	var out bytes.Buffer
+	if err := renderBatchReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	html := out.String()
+	visible := stdhtml.UnescapeString(html)
+	for _, value := range []string{
+		"Repositories by Git tag", "Lookup incomplete", "<dt>Mode</dt><dd>Read-only</dd>", report.Selection,
+		"<strong>3</strong><span>Checked</span>", "<strong>1</strong><span>Matched</span>", "<strong>1</strong><span>Absent</span>", "<strong>1</strong><span>Failed</span>",
+		">MATCHED</span>", ">ABSENT</span>", ">FAILED</span>", ">Tag commit</th>", ">Git tag</th>", testSHA, report.Results[0].CommitTitle,
+		report.Results[0].Message, report.Results[1].Message, report.Results[2].Error,
+		"Failed rows do not establish whether the selected tag is present.", "This is a read-only lookup.", "No repositories, Git tags, or Docker images were changed.",
+	} {
+		if !strings.Contains(visible, value) {
+			t.Errorf("repository lookup report is missing %q", value)
+		}
+	}
+	previous := -1
+	for _, result := range report.Results {
+		index := strings.Index(html, "<strong>"+result.Project+"</strong>")
+		if index <= previous {
+			t.Fatalf("HTML changed the checked repository order: %s", result.Project)
+		}
+		previous = index
+	}
+	for _, phrase := range []string{"PASS means a tag was created", "Git tag deleted.", "Git tag created.", "<span>Planned</span>", "selected configuration order"} {
+		if strings.Contains(html, phrase) {
+			t.Errorf("read-only lookup report contains write-operation semantics %q", phrase)
+		}
+	}
+}
+
+func TestBatchHTMLReportRepositoryLookupAbsentUnknownAndEmptyStates(t *testing.T) {
+	for _, status := range []string{"skipped", "failed", "empty"} {
+		t.Run(status, func(t *testing.T) {
+			report := exampleBatchReport()
+			report.Operation, report.DryRun = "repo-list", true
+			if status != "empty" {
+				report.Results = []result{{Project: "team/service", Operation: "repo-list", Tag: "release-v2", Status: status}}
+			}
+			var out bytes.Buffer
+			if err := renderBatchReport(&out, report); err != nil {
+				t.Fatal(err)
+			}
+			html := out.String()
+			if strings.Contains(html, "DRY RUN — planned operations were not executed") || strings.Contains(html, "Commit title unavailable") {
+				t.Error("read-only tag lookup was presented as an unexecuted operation or given a fabricated commit")
+			}
+			switch status {
+			case "skipped":
+				for _, text := range []string{"No checked repositories contain the selected Git tag.", "its absence was verified", ">ABSENT</span>"} {
+					if !strings.Contains(html, text) {
+						t.Errorf("verified absence is missing %q", text)
+					}
+				}
+			case "failed":
+				if !strings.Contains(html, "No matching repositories were confirmed; tag presence remains unknown for failed lookups.") || strings.Contains(html, "No checked repositories contain") || !strings.Contains(html, "The tag lookup did not complete; tag presence is unknown.") {
+					t.Error("failed lookup was presented as confirmed absence")
+				}
+			case "empty":
+				if !strings.Contains(html, "No direct repositories were found in the selected group.") || strings.Contains(html, "No repository jobs were selected.") {
+					t.Error("empty group has a misleading empty-state message")
+				}
+			}
+		})
+	}
+}
+
+func TestBatchHTMLReportRepositoryLookupEscapesMetadataAndFallbackTitles(t *testing.T) {
+	report := exampleBatchReport()
+	report.Operation = "repo-list"
+	report.Selection = `<script>GROUP</script> & "tag"`
+	report.Results = []result{
+		{Project: `<script>REPOSITORY</script>`, Operation: "repo-list", Tag: `<b>TAG</b>`, Commit: testSHA, CommitTitle: `<img src=x onerror="TITLE">`, Status: "found"},
+		{Project: "team/untitled", Operation: "repo-list", Tag: "v2", Commit: testSHA, CommitTitle: " \t ", Status: "found"},
+		{Project: "team/error", Operation: "repo-list", Tag: "v2", Status: "failed", Error: `<script>ERROR</script>`},
+	}
+	var out bytes.Buffer
+	if err := renderBatchReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	html := out.String()
+	for _, raw := range []string{"<script>", "<img src=x", "<b>TAG</b>"} {
+		if strings.Contains(html, raw) {
+			t.Errorf("unescaped lookup metadata %q", raw)
+		}
+	}
+	for _, escaped := range []string{"&lt;script&gt;GROUP", "&lt;script&gt;REPOSITORY", "&lt;b&gt;TAG&lt;/b&gt;", "&lt;img src=x", "&lt;script&gt;ERROR", "Commit title unavailable", testSHA} {
+		if !strings.Contains(html, escaped) {
+			t.Errorf("lookup report omitted escaped content/title fallback %q", escaped)
+		}
+	}
+}

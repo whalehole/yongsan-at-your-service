@@ -60,7 +60,7 @@ version: 1
 working_directory: /data/yas
 ```
 
-Then run `/tools/yas config init`. It creates `/data/yas/yas.yaml`, where you configure GitLab access and repository lists. Tagging, builds, release scans, and configuration validation load that operational file. If you already have a configuration, move or copy it into the working directory manually; the application does not migrate it automatically, and initialization never overwrites it.
+Then run `/tools/yas config init`. It creates `/data/yas/yas.yaml`, where you configure GitLab access and repository lists. Repository listing, tagging, builds, release scans, and configuration validation load that operational file. If you already have a configuration, move or copy it into the working directory manually; the application does not migrate it automatically, and initialization never overwrites it.
 
 A relative `working_directory` is resolved from the executable's directory. Only the executable-side file selects the location; a `working_directory` value in the operational file does not redirect again. There is no `--config` option, invocation-directory or parent-directory search, or prompt for an alternative configuration filename. A missing operational file directs you to `yas config init`.
 
@@ -119,6 +119,7 @@ gitlab:
 | Command | Purpose |
 | --- | --- |
 | `yas` | Show an operation menu when standard input is an interactive terminal; otherwise show help |
+| `yas repo list` | List repositories in a configured GitLab group that contain an exact Git tag |
 | `yas tag one` | Create a Git tag in one repository |
 | `yas tag delete one` | Delete a named Git tag from one project |
 | `yas tag delete batch` | Delete the same named Git tag from tagging projects |
@@ -137,7 +138,7 @@ Every command also supports `--help`/`-h`.
 
 ### Optional group selection
 
-Add group paths to `gitlab.groups` to avoid retyping them in single-repository prompts:
+Add group paths to `gitlab.groups` for single-repository prompts and repository discovery with `yas repo list`:
 
 ```yaml
 gitlab:
@@ -150,7 +151,7 @@ gitlab:
 
 When `--project` is missing, `yas tag one`, `yas tag delete one`, and `yas build one` offer those groups plus **Skip (enter full project path or ID)**. Select `company/platform` and enter `api` to use `company/platform/api`; enter `subgroup/api` to use `company/platform/subgroup/api`. After selecting a group, type only the path within it. Choose Skip to enter a full namespace/project path or numeric project ID without an automatic prefix.
 
-Omit `groups` or set `groups: []` to bypass group selection and enter the full project path directly. Explicit `--project` values bypass the menu and are never prefixed. Non-interactive commands still require `--project`. Batch group menus are derived from the project paths in the applicable repository list, independently of `gitlab.groups`; groups never discover remote repositories.
+For single-repository commands, omit `groups` or set `groups: []` to bypass group selection and enter the full project path directly. Explicit `--project` values bypass the menu and are never prefixed. Non-interactive commands still require `--project`. Batch group menus are derived from the project paths in the applicable repository list, independently of `gitlab.groups`, and select existing entries. `yas repo list` instead requires a configured group and discovers its repositories through GitLab.
 
 ### Group options for commands and batches
 
@@ -162,7 +163,7 @@ yas tag delete one --project yas-dummy-group/dummy-1 --tag v1.2.0
 yas build one --project yas-dummy-group/dummy-1 --tag v1.2.0 --image dummy-1:1.2.0
 ```
 
-The `--group` and `--all-groups` flags apply to GitLab batch operations and release scans. Interactive single-repository flows still offer the optional `gitlab.groups` menu when `--project` is missing.
+The `--group` and `--all-groups` flags apply to GitLab batch operations and release scans. `yas repo list` also accepts `--group` for one configured `gitlab.groups` entry, without an `--all-groups` option. Interactive single-repository flows still offer the optional `gitlab.groups` menu when `--project` is missing.
 
 Interactive `tag batch`, `tag delete batch`, and `build batch` offer groups extracted from their own configured project lists plus **All groups**. For example, `yas-dummy-group/dummy-1` contributes the group `yas-dummy-group`; `company/team/service` contributes `company/team`. A numeric-only entry is offered under **Project IDs (no group path)**. Selecting a group limits execution to that exact full namespace, excluding other groups and nested namespaces.
 
@@ -176,7 +177,7 @@ yas build batch --tag v1.2.0 --group yas-dummy-group
 yas tag batch --branch release/1.2 --all-groups
 ```
 
-`--group` and `--all-groups` are mutually exclusive. An unknown group fails before any work. Repeatable `--only` values remain full configured project identifiers; when combined with `--group`, every selected project must belong to that group, otherwise the command fails. Supplying `--only` bypasses the group menu. In non-interactive mode, omitting group filters retains the existing behavior of processing the full list. Group filtering only selects existing list entries; it does not add group prefixes to batch entries or discover projects on GitLab.
+For batch operations and release scans, `--group` and `--all-groups` are mutually exclusive. An unknown group fails before any work. Repeatable `--only` values remain full configured project identifiers; when combined with `--group`, every selected project must belong to that group, otherwise the command fails. Supplying `--only` bypasses the group menu. In non-interactive mode, omitting group filters retains the existing behavior of processing the full list. These filters only select existing list entries; they do not add group prefixes to batch entries or discover projects on GitLab.
 
 ### Prompting
 
@@ -200,6 +201,34 @@ yas tag one --project my-group/service-a --branch main
 Batch commands obtain repository details from their own configuration list and do not prompt for missing repository fields. A missing or invalid operational `yas.yaml` is reported before operation prompts begin.
 
 For CI and scripts, provide all required flags and use `--non-interactive`. Missing values produce an error instead of waiting for input. This behavior also applies automatically when standard input is not a terminal; piping answers into a command does not enable prompts.
+
+## List repositories by Git tag
+
+`yas repo list` discovers the repositories directly owned by one configured GitLab group and checks which contain an exact Git tag. It reads GitLab metadata without downloading source archives, cloning history, invoking Docker, or changing tags. The parent command also accepts the aliases `repository`, `repositories`, and `repos`.
+
+```bash
+yas repo list --group my-group --tag 1.2.9
+# Keep machine-readable results without a saved HTML report:
+yas repo list --group my-group --tag 1.2.9 --format json --no-report
+# Override the built-in lookup settings:
+yas repo list --group my-group --tag 1.2.9 --concurrency 4 --timeout 5m
+```
+
+Configure at least one group under `gitlab.groups`. An explicit `--group` must exactly match one of those entries, even in non-interactive mode. In an interactive terminal, an omitted group is selected from that list, followed by a prompt for the exact Git tag. Tags are entered manually rather than selected from a remotely enumerated tag list. The root menu also offers **List repositories by Git tag**. Non-interactive calls require both `--group` and `--tag`; blank or invalid inputs return exit code `2`.
+
+Discovery reads every page of the group's projects visible to the GitLab token. It includes direct repositories and excludes shared projects and nested subgroup repositories. The results are independent of `tagging.repositories`, `building.repositories`, and `release.repositories`; the command checks the discovered projects even when they are absent from those lists.
+
+Tag lookups default to concurrency `8` and a `2m` job timeout, with positive `--concurrency` and `--timeout` overrides. These defaults are independent of the other operations' configuration settings. Results are sorted by project path and include every checked repository:
+
+| Status | Meaning |
+| --- | --- |
+| `found` | The exact Git tag exists; the result includes its commit SHA and title when available |
+| `skipped` | The tag was confirmed absent in an accessible repository |
+| `failed` | The tag lookup or access verification failed |
+
+Tag absence is a normal result. Other repository checks continue after an individual failure; any failed check returns exit code `1`, while a completed listing with only found/absent results returns `0`. Group discovery failures return `1` before repository jobs begin and do not create a report. `--dry-run` is rejected because this command already performs read-only lookups and produces the requested results/report.
+
+The normal HTML report and report-opening settings apply: use `--report`, `--no-report`, `--open-report`, or `--no-open-report` as needed. JSON stdout contains the ordered per-repository results; report paths and progress remain on stderr. GitLab authentication uses the normal operational configuration and token settings.
 
 ## Tagging
 
@@ -700,7 +729,7 @@ The lists are independent: this example tags services A and B, builds services A
 | `gitlab.url` | `https://gitlab.com` |
 | `gitlab.insecure_skip_verify` | `false`; enable explicitly to skip GitLab TLS certificate verification |
 | `gitlab.token` | Optional access token stored directly in the config; takes precedence over environment authentication |
-| `gitlab.groups` | Optional list of group/subgroup paths for interactive single-repository selection; defaults to an empty list |
+| `gitlab.groups` | Group/subgroup paths offered by single-repository prompts and required for `yas repo list`; defaults to an empty list |
 | `gitlab.token_env` | `GITLAB_TOKEN`; used when `token` is empty or `--token-env` is supplied |
 | `tagging.concurrency` | `8`; must be positive |
 | `tagging.timeout` | `2m`; positive time limit for each repository job |
@@ -759,16 +788,16 @@ The `one` commands use the shared connection settings, operation timeouts, appli
 | `--format text\|json` | Operation result format; default `text` |
 | `--no-progress` | Hide live operation progress; Docker logs and final results remain |
 | `--non-interactive` | Error on missing required inputs instead of prompting |
-| `--concurrency N` | Batch commands and release scans; maximum simultaneous jobs; overrides Docker image deletion's configured default (`4` when unset) |
+| `--concurrency N` | Batch commands, release scans, and repository listing; maximum simultaneous jobs; overrides Docker image deletion's configured default (`4` when unset) |
 | `--only PROJECT` | GitLab batch commands and release scans; repeatable selection from that operation's configured list |
-| `--report PATH` | Batch commands only; save the HTML report to a new `.html` file at this path |
-| `--no-report` | Batch commands only; disable saving and opening the report |
-| `--open-report[=BOOL]` | Batch commands only; override `reports.auto_open` to open saved reports (`false` disables it) |
-| `--no-open-report[=BOOL]` | Batch commands only; suppress automatic opening (`false` enables it) |
+| `--report PATH` | Batch commands and `repo list`; save the HTML report to a new `.html` file at this path |
+| `--no-report` | Batch commands and `repo list`; disable saving and opening the report |
+| `--open-report[=BOOL]` | Batch commands and `repo list`; override `reports.auto_open` to open saved reports (`false` disables it) |
+| `--no-open-report[=BOOL]` | Batch commands and `repo list`; suppress automatic opening (`false` enables it) |
 | `--name NAME` | Docker image deletion only; select an exact basename or full repository path |
 | `--yes` | Docker image deletion only; approve the previewed removals without a confirmation prompt |
 
-Run `yas tag one --help`, `yas tag batch --help`, `yas build one --help`, `yas build batch --help`, `yas image delete batch --help`, or `yas release scan --help` for command-specific flags. Configuration commands validate or write the fixed file; connection overrides and execution flags apply to their respective operation commands.
+Run `yas repo list --help`, `yas tag one --help`, `yas tag batch --help`, `yas build one --help`, `yas build batch --help`, `yas image delete batch --help`, or `yas release scan --help` for command-specific flags. Configuration commands validate or write the fixed file; connection overrides and execution flags apply to their respective operation commands.
 
 ## Live progress
 
@@ -799,13 +828,13 @@ The final result table/JSON remains in configuration order; live progress follow
 
 ## Batch reports
 
-`yas tag batch`, `yas tag delete batch`, `yas build batch`, and `yas image delete batch` automatically save a standalone HTML report in `reports/` under the configured working directory, including when selected jobs fail or the run is canceled. Each default filename contains the operation, a timestamp, and a unique suffix. Open the file in a browser to read, share, or print/save it as a PDF; it needs no internet connection or additional software to render beyond the browser. Single-repository commands do not create reports.
+`yas repo list`, `yas tag batch`, `yas tag delete batch`, `yas build batch`, and `yas image delete batch` automatically save a standalone HTML report in `reports/` under the configured working directory, including when selected jobs fail or the run is canceled. Each default filename contains the operation, a timestamp, and a unique suffix. Open the file in a browser to read, share, or print/save it as a PDF; it needs no internet connection or additional software to render beyond the browser. Single-repository commands do not create reports.
 
 Each report includes:
 
-- The operation, application version, GitLab server when applicable, and execution or dry-run mode.
+- The operation, application version, GitLab server when applicable, and execution, dry-run, or read-only mode.
 - Start and finish timestamps with time zones, total elapsed time, concurrency, and the per-job timeout.
-- Total, passed, failed, skipped, and planned counts.
+- Total, passed, failed, skipped, and planned counts; repository listings instead show checked, matched, absent, and failed counts.
 - One row per selected job in configuration or inventory order, showing its outcome, exact status, source reference, commit title beside the full resolved SHA when available, destination tag or image, duration, and failure details. A missing commit title is shown as unavailable and does not change the operation's outcome. Builds also show separate build/save outcomes, archive paths, and save errors when saving is requested. Docker image-deletion rows identify the image reference and snapshotted image ID.
 
 `created`, `deleted`, and `built` count as **passed**. `skipped` and `planned` remain separate: a skipped job made no change, and a planned dry-run job did not execute the operation. Dry-run reports describe the checks performed and do not prove that a later build or tag write will succeed. Reports contain result details rather than raw Docker logs, configuration contents, environment variables, command-line arguments, or build arguments.
@@ -830,7 +859,7 @@ reports:
   auto_open: true
 ```
 
-This setting applies to all four batch commands listed above, including interactive and root-menu runs. Explicit `--open-report` or `--no-open-report` flags override it for one invocation:
+This setting applies to all five reporting commands listed above, including interactive and root-menu runs. Explicit `--open-report` or `--no-open-report` flags override it for one invocation:
 
 ```bash
 yas build batch --tag v1.2.0 --open-report
@@ -852,7 +881,7 @@ yas build batch --tag v1.2.0 --dry-run --format json
 
 A dry run still requires the configured token and contacts GitLab. Tagging checks source existence, branch reachability where requested, and existing tag conflicts. Building resolves source refs but does not download archives, inspect Dockerfiles or build contexts remotely, contact Docker, or prove that a future build will succeed. A tagging dry run also cannot prove permission to create a new protected tag because it performs no write.
 
-Operations report one result per selected job in configuration or inventory order, even when jobs finish in a different order. Status values are `created`, `deleted`, `built`, `skipped`, `planned`, and `failed`. Results include the resolved commit SHA when available; JSON also contains operation/source/target fields, job duration, a `message` explaining confirmed outcomes, and an `error` for failures.
+Operations report one result per selected job in configuration or inventory order, even when jobs finish in a different order. Status values are `found`, `created`, `deleted`, `built`, `skipped`, `planned`, and `failed`. Results include the resolved commit SHA when available; JSON also contains operation/source/target fields, job duration, a `message` explaining confirmed outcomes, and an `error` for failures.
 
 ```bash
 yas build batch --tag v1.2.0 --non-interactive --format json > results.json

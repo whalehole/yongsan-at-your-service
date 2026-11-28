@@ -90,8 +90,8 @@ func New(options Options) *cobra.Command {
 		interactive: func() bool { return options.Interactive && !a.nonInteractive },
 	}
 	root := &cobra.Command{
-		Use: "yas", Short: "GitLab tagging, Docker image operations, and release notes",
-		Long: "Tag GitLab repositories, build Docker images, and collect release commits from exact revisions.\nRead working_directory from yas.yaml beside the real executable. Configuration and relative paths use that directory, defaulting to the binary's directory.",
+		Use: "yas", Short: "GitLab repositories, Docker image operations, and release notes",
+		Long: "Find repositories by Git tag, manage GitLab tags, build Docker images, and collect release commits from exact revisions.\nRead working_directory from yas.yaml beside the real executable. Configuration and relative paths use that directory, defaulting to the binary's directory.",
 		Args: cobra.NoArgs, SilenceErrors: true, SilenceUsage: true,
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 	}
@@ -121,11 +121,14 @@ func New(options Options) *cobra.Command {
 	imageDelete.AddCommand(imageDeleteBatch)
 	image := &cobra.Command{Use: "image", Aliases: []string{"images"}, Short: "Manage images in the selected Docker daemon", Args: cobra.NoArgs}
 	image.AddCommand(imageDelete)
+	repoList := a.listRepositories()
+	repo := &cobra.Command{Use: "repo", Aliases: []string{"repos", "repository", "repositories"}, Short: "Find repositories in configured GitLab groups", Args: cobra.NoArgs}
+	repo.AddCommand(repoList)
 	deleteCmd := &cobra.Command{Use: "delete", Short: "Delete a named Git tag", Args: cobra.NoArgs}
 	deleteCmd.AddCommand(deleteOne, deleteBatch)
 	tag.AddCommand(tagOne, tagBatch, deleteCmd)
 	build.AddCommand(buildOne, buildBatch)
-	root.AddCommand(tag, build, image, releaseCmd, a.configCommand())
+	root.AddCommand(tag, build, image, repo, releaseCmd, a.configCommand())
 	root.AddCommand(&cobra.Command{
 		Use: "version", Short: "Print the application version", Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -140,12 +143,12 @@ func New(options Options) *cobra.Command {
 		index, err := a.prompt.choose(cmd.Context(), "Choose an operation:", []string{
 			"Tag one repository", "Tag repositories from config", "Build one Docker image", "Build Docker images from config",
 			"Delete a tag from one repository", "Delete a tag from tagging repositories",
-			"Scan release changes into YAML", "Generate HTML release notes", "Delete Docker images",
+			"Scan release changes into YAML", "Generate HTML release notes", "Delete Docker images", "List repositories by Git tag",
 		})
 		if err != nil {
 			return usageError(err)
 		}
-		selected := []*cobra.Command{tagOne, tagBatch, buildOne, buildBatch, deleteOne, deleteBatch, releaseScan, releaseRender, imageDeleteBatch}[index]
+		selected := []*cobra.Command{tagOne, tagBatch, buildOne, buildBatch, deleteOne, deleteBatch, releaseScan, releaseRender, imageDeleteBatch, repoList}[index]
 		selected.SetContext(cmd.Context())
 		return selected.RunE(selected, nil)
 	}
