@@ -6,7 +6,7 @@ A Go command-line application for concurrent GitLab tagging and Docker builds. T
 
 - Go 1.23 or newer to build the application.
 - A GitLab personal, group, or project access token with access to the selected projects.
-- Docker CLI on `PATH` and a reachable Docker daemon for actual builds. Docker is not needed for tagging, configuration commands, or dry runs.
+- Docker CLI on `PATH` and a reachable Docker daemon for actual builds and image deletion, including image-deletion dry runs. GitLab operations and build dry runs do not need Docker.
 
 From this repository:
 
@@ -66,7 +66,7 @@ A relative `working_directory` is resolved from the executable's directory. Only
 
 Relative command-line input/output paths are resolved from the configured working directory. Default batch reports use `reports/`, image archives use `images/<batch-id>/`, release drafts use `release-notes/yaml/`, and rendered release HTML uses `release-notes/html/` there. Absolute paths are honored. Repository build contexts and Dockerfile paths retain their repository-relative meanings.
 
-Use a built executable for initialization and normal runs: `go run` creates a temporary executable, which also changes the default working directory. Help, version, and the interactive root menu do not require operational configuration. `config init` creates it; `config validate` checks it locally without a token. Release rendering also needs no operational configuration or token, but reads the executable-side locator if present to find the working directory; malformed locator YAML is reported as an error.
+Use a built executable for initialization and normal runs: `go run` creates a temporary executable, which also changes the default working directory. Help, version, and the interactive root menu do not require operational configuration. `config init` creates it; `config validate` checks it locally without a token. Release rendering and Docker image deletion also need no operational configuration or GitLab token, but read the executable-side locator if present to find the working directory; malformed locator YAML is reported as an error.
 
 ## GitLab authentication
 
@@ -125,6 +125,7 @@ gitlab:
 | `yas tag batch` | Tag selected entries from `tagging.repositories` |
 | `yas build one` | Build one image from a commit or Git tag |
 | `yas build batch` | Build selected entries from `building.repositories` |
+| `yas image delete batch` | Preview and delete exact matching tagged image references from the selected Docker daemon |
 | `yas release scan` | Collect new release commits across selected repositories and write an editable YAML draft |
 | `yas release render` | Turn selected release-notes YAML files into individual HTML documents with selectable grouping |
 | `yas config init` | Create the working directory's example `yas.yaml` without overwriting a file |
@@ -161,7 +162,7 @@ yas tag delete one --project yas-dummy-group/dummy-1 --tag v1.2.0
 yas build one --project yas-dummy-group/dummy-1 --tag v1.2.0 --image dummy-1:1.2.0
 ```
 
-The `--group` and `--all-groups` flags apply only to batches. Interactive single-repository flows still offer the optional `gitlab.groups` menu when `--project` is missing.
+The `--group` and `--all-groups` flags apply to GitLab batch operations and release scans. Interactive single-repository flows still offer the optional `gitlab.groups` menu when `--project` is missing.
 
 Interactive `tag batch`, `tag delete batch`, and `build batch` offer groups extracted from their own configured project lists plus **All groups**. For example, `yas-dummy-group/dummy-1` contributes the group `yas-dummy-group`; `company/team/service` contributes `company/team`. A numeric-only entry is offered under **Project IDs (no group path)**. Selecting a group limits execution to that exact full namespace, excluding other groups and nested namespaces.
 
@@ -297,6 +298,42 @@ Both commands prompt for missing required inputs in an interactive terminal. The
 Results are `deleted`, `skipped` for an already-absent tag in an accessible project, `planned` for an existing tag in a dry run, or `failed`. Permission errors and missing/inaccessible projects are failures. Independent jobs continue and any failure returns exit code 1. Existing timeout, JSON, non-interactive, authentication, and batch selection flags apply.
 
 Deletion removes the remote Git tag regardless of its commit, and does not change local tags or delete Docker image tags. GitLab deletion permissions and protected-tag rules apply. These commands issue actual deletions unless `--dry-run` is supplied.
+
+## Delete Docker images
+
+`yas image delete batch` selects tagged image references from the Docker daemon chosen by your current Docker context and environment. It needs the Docker CLI and a reachable daemon, without operational configuration or a GitLab token. This command removes daemon image references; `yas tag delete` removes GitLab tags. Images in a registry are not deleted. [Docker image removal reference](https://docs.docker.com/reference/cli/docker/image/rm/)
+
+```bash
+# Preview every tag whose repository basename is exactly accesscontrols-service:
+yas image delete batch --name accesscontrols-service --dry-run
+# Approve those matching removals:
+yas image delete batch --name accesscontrols-service --yes
+# Preview one exact tag across all repositories in the selected daemon:
+yas image delete batch --tag 1.2.9 --dry-run
+# Delete those exact tag matches with up to four simultaneous jobs:
+yas image delete batch --tag 1.2.9 --yes --concurrency 4
+# Narrow both the repository and tag:
+yas image delete batch --name registry.example.com/team/accesscontrols-service --tag 1.2.9 --yes
+```
+
+| Selection | Matching rule |
+| --- | --- |
+| `--name accesscontrols-service` | Exact final repository component, across namespaces and registries |
+| `--name registry.example.com/team/accesscontrols-service` | Exact full repository path |
+| `--tag 1.2.9` | Exact tag across all repositories |
+| Both `--name` and `--tag` | Both conditions must match |
+
+Matching uses no wildcards or substring searches. Untagged/dangling images are excluded. The preview lists each matching full `repository:tag` reference and its image ID, even when several references share an ID.
+
+With neither selection flag supplied, interactive mode offers selection by name or tag. It then displays the preview and asks for confirmation with **No** as the default. The root menu also offers **Delete Docker images**. `--yes` skips confirmation. Non-interactive deletion requires `--yes`; `--dry-run` previews planned work without requiring confirmation or removing references.
+
+The application snapshots the inventory and displays the preview once. Each worker rechecks its reference before removal to confirm it still points to the snapshotted image ID: a changed reference fails, and a reference already absent is skipped. These checks are not atomic with removal, so concurrent Docker activity can still race with the command.
+
+`--concurrency N` must be a positive integer and defaults to `4`. The actual worker count is the smaller of `N` and the number of matching references; use `--concurrency 1` for serial removal. `--timeout` defaults to `2m` for inventory discovery and for each image-reference job. A job's timeout starts when its worker begins, excluding time waiting in the queue. Reports record the actual concurrency.
+
+Removal always names the full matching `repository:tag`, never an image ID. The command supplies no `--force` and does not stop or remove containers. Nonmatching tags sharing the same image ID are not requested for deletion, and Docker retains image data still referenced elsewhere. Removing a tagged reference can therefore untag an image without reclaiming its layers. [Docker tag and image removal behavior](https://docs.docker.com/reference/cli/docker/image/rm/)
+
+Results are `deleted`, `skipped`, `planned`, or `failed`, one per matching reference. Other jobs continue after an individual failure; any failure returns exit code `1`. Results retain the sorted inventory order even when jobs finish in a different order. JSON results include `image` (the full reference), `image_id`, `project` (the repository), and `tag`, plus the outcome and failure details. A batch HTML report is saved under the working directory's `reports/` folder; use `--report PATH` to choose a new file or `--no-report` to disable it. These output paths follow the normal working-directory rules.
 
 ## Docker builds
 
@@ -701,16 +738,18 @@ The `one` commands use the shared connection settings, operation timeouts, appli
 | `--gitlab-url URL` | Override the operation's GitLab server URL |
 | `--token-env NAME` | Override the environment variable containing the token |
 | `--timeout DURATION` | Override each repository job's time limit, such as `5m` or `1h` |
-| `--dry-run` | Resolve sources and report planned work without tag creation or image builds |
+| `--dry-run` | Preview requested work without changing Git tags, building images, or deleting Docker image references |
 | `--format text\|json` | Operation result format; default `text` |
 | `--no-progress` | Hide live operation progress; Docker logs and final results remain |
 | `--non-interactive` | Error on missing required inputs instead of prompting |
-| `--concurrency N` | Batch commands and release scans; maximum simultaneous repository jobs |
-| `--only PROJECT` | Batch commands and release scans; repeatable selection from that operation's configured list |
+| `--concurrency N` | Batch commands and release scans; maximum simultaneous jobs; Docker image deletion defaults to `4` |
+| `--only PROJECT` | GitLab batch commands and release scans; repeatable selection from that operation's configured list |
 | `--report PATH` | Batch commands only; save the HTML report to a new `.html` file at this path |
 | `--no-report` | Batch commands only; disable the automatic saved report |
+| `--name NAME` | Docker image deletion only; select an exact basename or full repository path |
+| `--yes` | Docker image deletion only; approve the previewed removals without a confirmation prompt |
 
-Run `yas tag one --help`, `yas tag batch --help`, `yas build one --help`, `yas build batch --help`, or `yas release scan --help` for command-specific flags. Configuration commands validate or write the fixed file; connection overrides and execution flags apply to their respective operation commands.
+Run `yas tag one --help`, `yas tag batch --help`, `yas build one --help`, `yas build batch --help`, `yas image delete batch --help`, or `yas release scan --help` for command-specific flags. Configuration commands validate or write the fixed file; connection overrides and execution flags apply to their respective operation commands.
 
 ## Live progress
 
@@ -719,7 +758,7 @@ Tagging, tag deletion, and Docker builds display live timestamped progress on st
 For example, this illustrative output shows two jobs overlapping (actual timing and order vary):
 
 ```text
-Running 3 repository job(s), concurrency=2 (maximum simultaneous jobs).
+Running 3 job(s), concurrency=2 (maximum simultaneous jobs).
 [14:03:00.001] job 1/3 [tag group/a -> v1] START resolving source commit | active=1 completed=0/3
 [14:03:00.002] job 2/3 [tag group/b -> v1] START resolving source commit | active=2 completed=0/3
 [14:03:00.140] job 2/3 [tag group/b -> v1] DONE created (138ms) | active=1 completed=1/3
@@ -741,14 +780,14 @@ The final result table/JSON remains in configuration order; live progress follow
 
 ## Batch reports
 
-`yas tag batch`, `yas tag delete batch`, and `yas build batch` automatically save a standalone HTML report in `reports/` under the configured working directory, including when selected repository jobs fail or the run is canceled. Each default filename contains the operation, a timestamp, and a unique suffix. Open the file in a browser to read, share, or print/save it as a PDF; it needs no internet connection or additional software to render beyond the browser. Single-repository commands do not create reports.
+`yas tag batch`, `yas tag delete batch`, `yas build batch`, and `yas image delete batch` automatically save a standalone HTML report in `reports/` under the configured working directory, including when selected jobs fail or the run is canceled. Each default filename contains the operation, a timestamp, and a unique suffix. Open the file in a browser to read, share, or print/save it as a PDF; it needs no internet connection or additional software to render beyond the browser. Single-repository commands do not create reports.
 
 Each report includes:
 
-- The operation, application version, GitLab server, and execution or dry-run mode.
+- The operation, application version, GitLab server when applicable, and execution or dry-run mode.
 - Start and finish timestamps with time zones, total elapsed time, concurrency, and the per-job timeout.
 - Total, passed, failed, skipped, and planned counts.
-- One row per selected repository job in configuration order, showing its outcome, exact status, source reference, commit title beside the full resolved SHA when available, destination tag or image, duration, and failure details. A missing commit title is shown as unavailable and does not change the operation's outcome. Builds also show separate build/save outcomes, archive paths, and save errors when saving is requested.
+- One row per selected job in configuration or inventory order, showing its outcome, exact status, source reference, commit title beside the full resolved SHA when available, destination tag or image, duration, and failure details. A missing commit title is shown as unavailable and does not change the operation's outcome. Builds also show separate build/save outcomes, archive paths, and save errors when saving is requested. Docker image-deletion rows identify the image reference and snapshotted image ID.
 
 `created`, `deleted`, and `built` count as **passed**. `skipped` and `planned` remain separate: a skipped job made no change, and a planned dry-run job did not execute the operation. Dry-run reports describe the checks performed and do not prove that a later build or tag write will succeed. Reports contain result details rather than raw Docker logs, configuration contents, environment variables, command-line arguments, or build arguments.
 
@@ -776,7 +815,7 @@ yas build batch --tag v1.2.0 --dry-run --format json
 
 A dry run still requires the configured token and contacts GitLab. Tagging checks source existence, branch reachability where requested, and existing tag conflicts. Building resolves source refs but does not download archives, inspect Dockerfiles or build contexts remotely, contact Docker, or prove that a future build will succeed. A tagging dry run also cannot prove permission to create a new protected tag because it performs no write.
 
-Operations report one result per repository job in input/configuration order, even when jobs finish in a different order. Status values are `created`, `deleted`, `built`, `skipped`, `planned`, and `failed`. Results include the resolved commit SHA when available; JSON also contains operation/source/target fields, job duration, a `message` explaining confirmed outcomes, and an `error` for failures.
+Operations report one result per selected job in configuration or inventory order, even when jobs finish in a different order. Status values are `created`, `deleted`, `built`, `skipped`, `planned`, and `failed`. Results include the resolved commit SHA when available; JSON also contains operation/source/target fields, job duration, a `message` explaining confirmed outcomes, and an `error` for failures.
 
 ```bash
 yas build batch --tag v1.2.0 --non-interactive --format json > results.json

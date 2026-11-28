@@ -11,6 +11,7 @@ import (
 // batchReport deliberately includes operation results, not configuration or logs.
 type batchReport struct {
 	Operation, Version, Server string
+	Selection                  string
 	StartedAt, FinishedAt      time.Time
 	Concurrency                int
 	Timeout                    time.Duration
@@ -40,11 +41,12 @@ func renderBatchReport(out io.Writer, report batchReport) error {
 		batchReport
 		Title, Outcome, Class, Started, Finished, Duration string
 		BatchID, ArchiveDirectory                          string
+		ImageDelete                                        bool
 		Summary                                            reportSummary
 		Saves                                              reportSaveSummary
 		Rows                                               []reportRow
-	}{batchReport: report, Summary: reportSummary{Total: len(report.Results)}}
-	data.Title = map[string]string{"tag": "Batch tag creation", "tag-delete": "Batch tag deletion", "build": "Batch Docker build"}[report.Operation]
+	}{batchReport: report, Summary: reportSummary{Total: len(report.Results)}, ImageDelete: report.Operation == "image-delete"}
+	data.Title = map[string]string{"tag": "Batch tag creation", "tag-delete": "Batch tag deletion", "build": "Batch Docker build", "image-delete": "Batch Docker image deletion"}[report.Operation]
 	if data.Title == "" {
 		data.Title = "Batch operation"
 	}
@@ -102,6 +104,16 @@ func renderBatchReport(out io.Writer, report batchReport) error {
 		default:
 			data.Summary.Failed++
 			row.Outcome, row.Class, row.Detail = "FAIL", "fail", "Operation did not complete."
+		}
+		if data.ImageDelete || r.Operation == "image-delete" {
+			switch r.Status {
+			case "deleted":
+				row.Detail = fmt.Sprintf("Docker image reference %q was removed; underlying image data may still be retained by other references.", r.Image)
+			case "skipped":
+				row.Detail = fmt.Sprintf("Docker image reference %q is already absent; nothing remained to remove.", r.Image)
+			case "planned":
+				row.Detail = fmt.Sprintf("Docker image reference %q would be removed; no image reference was removed (dry run).", r.Image)
+			}
 		}
 		if r.Message != "" {
 			row.Detail = r.Message
@@ -181,13 +193,14 @@ code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;o
 </head>
 <body><main>
 <header><div><div class="eyebrow">YAS · Batch report</div><h1>{{.Title}}</h1></div><span class="badge {{.Class}}">{{.Outcome}}</span></header>
-{{if .DryRun}}<p class="notice"><strong>DRY RUN — planned operations were not executed.</strong><br>These results describe source and tag checks, not completed changes or successful image builds.{{if .Saves.Total}} No image archives were written.{{end}}</p>{{end}}
+{{if .DryRun}}<p class="notice"><strong>DRY RUN — planned operations were not executed.</strong><br>{{if .ImageDelete}}These results describe selected local Docker image references. No image references were removed.{{else}}These results describe source and tag checks, not completed changes or successful image builds.{{if .Saves.Total}} No image archives were written.{{end}}{{end}}</p>{{end}}
 {{if .Canceled}}<p class="notice"><strong>The batch was canceled.</strong> Completed operations remain completed. Failed rows include any jobs interrupted or canceled before execution.</p>{{end}}
 <dl>
 <dt>Started</dt><dd>{{.Started}}</dd><dt>Finished</dt><dd>{{.Finished}}</dd>
 <dt>Total duration</dt><dd>{{.Duration}}</dd><dt>Mode</dt><dd>{{if .DryRun}}Dry run{{else}}Execute{{end}}</dd>
-<dt>GitLab server</dt><dd>{{.Server}}</dd><dt>YAS version</dt><dd>{{.Version}}</dd>
+<dt>{{if .ImageDelete}}Docker target{{else}}GitLab server{{end}}</dt><dd>{{.Server}}</dd><dt>YAS version</dt><dd>{{.Version}}</dd>
 <dt>Concurrency</dt><dd>{{.Concurrency}}</dd><dt>Job timeout</dt><dd>{{.Timeout}}</dd>
+{{if .Selection}}<dt>Selection</dt><dd>{{.Selection}}</dd>{{end}}
 {{if .BatchID}}<dt>Batch ID</dt><dd><code>{{.BatchID}}</code></dd>{{end}}{{if .ArchiveDirectory}}<dt>Archive directory</dt><dd><code>{{.ArchiveDirectory}}</code></dd>{{end}}
 </dl>
 <section class="summary" aria-label="Result totals">
@@ -198,15 +211,15 @@ code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;o
 <div class="stat planned"><strong>{{.Summary.Planned}}</strong><span>Planned</span></div>
 </section>
 {{if .Saves.Total}}<section class="save-summary" aria-label="Docker save totals"><strong>Docker save</strong><span>{{.Saves.Saved}} saved</span><span>{{.Saves.Failed}} failed</span><span>{{.Saves.Planned}} planned</span><span>{{.Saves.NotRun}} not run</span></section>{{end}}
-<h2>Repository results</h2>
+<h2>{{if .ImageDelete}}Image deletion results{{else}}Repository results{{end}}</h2>
 <div class="table-wrap"><table>
-<thead><tr><th scope="col">Repository</th><th scope="col">Result</th><th scope="col">Source / commit</th><th scope="col">Target</th><th scope="col">Duration</th><th scope="col">Details / failure reason</th></tr></thead>
+<thead><tr><th scope="col">{{if .ImageDelete}}Image repository{{else}}Repository{{end}}</th><th scope="col">Result</th><th scope="col">{{if .ImageDelete}}Image ID{{else}}Source / commit{{end}}</th><th scope="col">Target</th><th scope="col">Duration</th><th scope="col">Details / failure reason</th></tr></thead>
 <tbody>{{range .Rows}}
 <tr><td><span class="muted">{{.Number}}.</span> <strong>{{.Project}}</strong></td><td><span class="badge {{.Class}}">{{.Outcome}}</span><span class="sub">{{.Status}}</span></td>
-<td>{{if .Reference}}<code>{{.Reference}}</code>{{else}}<span class="muted">—</span>{{end}}{{if .Commit}}<span class="sub">{{.CommitLabel}}</span><span class="commit-title">{{.ResolvedCommitTitle}}</span><code>{{.Commit}}</code>{{end}}</td>
+<td>{{if $.ImageDelete}}{{if .ImageID}}<code>{{.ImageID}}</code>{{else}}<span class="muted">—</span>{{end}}{{else}}{{if .Reference}}<code>{{.Reference}}</code>{{else}}<span class="muted">—</span>{{end}}{{if .Commit}}<span class="sub">{{.CommitLabel}}</span><span class="commit-title">{{.ResolvedCommitTitle}}</span><code>{{.Commit}}</code>{{end}}{{end}}</td>
 <td>{{if .Target}}<span class="sub">{{.TargetLabel}}</span><code>{{.Target}}</code>{{else}}<span class="muted">—</span>{{end}}</td><td class="duration">{{.Duration}}</td><td>{{if .BuildOutcome}}<div class="stage"><span class="stage-label">Build</span> <span class="badge {{.BuildClass}}">{{.BuildOutcome}}</span></div>{{end}}{{if .SaveOutcome}}<div class="stage"><span class="stage-label">Docker save</span> <span class="badge {{.SaveClass}}">{{.SaveOutcome}}</span></div>{{end}}{{if and (eq .SaveStatus "saved") .Archive}}<span class="sub">Image archive</span><code class="archive">{{.Archive}}</code>{{end}}{{if .SaveExplanation}}<p class="detail">{{.SaveExplanation}}</p>{{end}}<div class="detail">{{.Detail}}</div></td></tr>
-{{else}}<tr><td colspan="6">No repository jobs were selected.</td></tr>{{end}}</tbody>
+{{else}}<tr><td colspan="6">{{if .ImageDelete}}No matching Docker image references were found.{{else}}No repository jobs were selected.{{end}}</td></tr>{{end}}</tbody>
 </table></div>
-<footer>{{if .Saves.Total}}Overall PASS means the requested operation completed, including Docker save when requested. Build and Docker save outcomes are shown separately.{{else}}PASS means a tag was created or deleted, or an image was built.{{end}} SKIPPED means no change was needed. PLANNED means the operation was not executed.<br>Results follow the selected configuration order. Job durations exclude time waiting for a worker. Open this file in a browser to read it or print it to PDF.</footer>
+<footer>{{if .ImageDelete}}PASS means the selected Docker image reference was removed. Other tags, references, containers, or shared layers may retain the underlying image data. Removal never uses force. SKIPPED means the reference was already absent. PLANNED means no image reference was removed.<br>Results follow the selected Docker image list.{{else}}{{if .Saves.Total}}Overall PASS means the requested operation completed, including Docker save when requested. Build and Docker save outcomes are shown separately.{{else}}PASS means a tag was created or deleted, or an image was built.{{end}} SKIPPED means no change was needed. PLANNED means the operation was not executed.<br>Results follow the selected configuration order.{{end}} Job durations exclude time waiting for a worker. Open this file in a browser to read it or print it to PDF.</footer>
 </main></body></html>
 `))

@@ -13,8 +13,9 @@ import (
 )
 
 type batchReportOptions struct {
-	path     string
-	disabled bool
+	path      string
+	disabled  bool
+	selection string
 }
 
 func (o *batchReportOptions) bind(cmd *cobra.Command) {
@@ -120,6 +121,7 @@ func (a *app) executeBatch(ctx context.Context, jobs []job, concurrency int, tim
 	report.data = batchReport{
 		Operation: operation, Version: a.options.Version, Server: server,
 		DryRun: a.dryRun, Timeout: timeout,
+		Selection: options.selection,
 	}
 	return a.executeWithReport(ctx, jobs, concurrency, timeout, report)
 }

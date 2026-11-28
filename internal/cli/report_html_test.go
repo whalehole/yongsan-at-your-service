@@ -445,3 +445,109 @@ func TestBatchHTMLReportLabelsLastObservedTagCommit(t *testing.T) {
 		t.Error("deletion report implies the observed tag commit is a fresh resolution")
 	}
 }
+
+func TestBatchHTMLReportImageDeletionShowsImageIdentityAndAllOutcomes(t *testing.T) {
+	report := exampleBatchReport()
+	report.Operation, report.Server, report.Selection = "image-delete", "Current Docker context/environment", `tag "1.0.9" in repository prefix "registry.example.com/team"`
+	imageID := "sha256:" + strings.Repeat("a", 64)
+	report.Results = []result{
+		{Project: "registry.example.com/team/service", Operation: "image-delete", Image: "registry.example.com/team/service:1.0.9", Tag: "1.0.9", ImageID: imageID, Status: "deleted", Commit: "git-only-sha", CommitTitle: "Git-only title must not appear", Reference: "git-only-reference"},
+		{Project: "registry.example.com/team/old", Operation: "image-delete", Image: "registry.example.com/team/old:1.0.9", ImageID: imageID, Status: "skipped"},
+		{Project: "registry.example.com/team/planned", Operation: "image-delete", Image: "registry.example.com/team/planned:1.0.9", ImageID: imageID, Status: "planned"},
+		{Project: "registry.example.com/team/busy", Operation: "image-delete", Image: "registry.example.com/team/busy:1.0.9", ImageID: imageID, Status: "failed", Error: "Docker refused to remove the reference because it is in use."},
+	}
+	var out bytes.Buffer
+	if err := renderBatchReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	html := out.String()
+	visible := stdhtml.UnescapeString(html)
+	for _, text := range []string{
+		"Batch Docker image deletion", "<dt>Docker target</dt>", "Current Docker context/environment", "<dt>Selection</dt>", report.Selection,
+		">Image repository</th>", ">Image ID</th>", "<code>" + imageID + "</code>", "registry.example.com/team/service:1.0.9", ">Docker image</span>",
+		"<strong>4</strong><span>Total</span>", "<strong>1</strong><span>Passed</span>", "<strong>1</strong><span>Failed</span>", "<strong>1</strong><span>Skipped</span>", "<strong>1</strong><span>Planned</span>",
+		">PASS</span>", ">FAIL</span>", ">SKIPPED</span>", ">PLANNED</span>",
+		`Docker image reference "registry.example.com/team/service:1.0.9" was removed`,
+		`Docker image reference "registry.example.com/team/old:1.0.9" is already absent`,
+		`Docker image reference "registry.example.com/team/planned:1.0.9" would be removed`,
+		report.Results[3].Error, "underlying image data", "Removal never uses force.", "Results follow the selected Docker image list.",
+	} {
+		if !strings.Contains(visible, text) {
+			t.Errorf("missing image deletion report content %q", text)
+		}
+	}
+	for _, unwanted := range []string{"<dt>GitLab server</dt>", ">Source / commit</th>", "<span class=\"commit-title\">", "Commit title unavailable", "git-only-sha", "Git-only title must not appear", "git-only-reference", "Git tag deleted.", "selected configuration order"} {
+		if strings.Contains(html, unwanted) {
+			t.Errorf("image report contains GitLab-specific or incorrect content %q", unwanted)
+		}
+	}
+}
+
+func TestBatchHTMLReportImageDeletionDryRunAndNoMatches(t *testing.T) {
+	report := exampleBatchReport()
+	report.Operation, report.DryRun = "image-delete", true
+	report.Results = []result{{Project: "team/service", Operation: "image-delete", Image: "team/service:v1", Status: "planned"}}
+	var out bytes.Buffer
+	if err := renderBatchReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	html := out.String()
+	for _, text := range []string{"DRY RUN", "No image references were removed.", "no image reference was removed (dry run).", "<strong>0</strong><span>Passed</span>", "<strong>1</strong><span>Planned</span>"} {
+		if !strings.Contains(html, text) {
+			t.Errorf("missing image dry-run explanation %q", text)
+		}
+	}
+	if strings.Contains(html, "source and tag checks") || strings.Contains(html, "Commit title unavailable") {
+		t.Error("image dry run contains GitLab or commit placeholders")
+	}
+	report.Results = nil
+	out.Reset()
+	if err := renderBatchReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "No matching Docker image references were found.") || strings.Contains(out.String(), "No repository jobs were selected.") {
+		t.Error("zero matching image references have the wrong empty-state explanation")
+	}
+}
+
+func TestBatchHTMLReportEscapesImageDeletionMetadata(t *testing.T) {
+	report := exampleBatchReport()
+	report.Operation = "image-delete"
+	report.Server = `Docker <target> & environment`
+	report.Selection = `<script>FILTER</script> & "quoted"`
+	report.Results = []result{{Project: `<script>REPOSITORY</script>`, Operation: "image-delete", Image: `<svg onload="IMAGE">:v1`, ImageID: `<img src=x onerror="ID">`, Status: "failed", Error: `<script>ERROR</script>`}}
+	var out bytes.Buffer
+	if err := renderBatchReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	html := out.String()
+	for _, raw := range []string{"<script>", "<svg onload=", "<img src=x", "Docker <target>"} {
+		if strings.Contains(html, raw) {
+			t.Errorf("unescaped image report value %q", raw)
+		}
+	}
+	for _, escaped := range []string{"Docker &lt;target&gt; &amp; environment", "&lt;script&gt;FILTER", "&lt;script&gt;REPOSITORY", "&lt;svg onload=", "&lt;img src=x", "&lt;script&gt;ERROR"} {
+		if !strings.Contains(html, escaped) {
+			t.Errorf("missing escaped image report value %q", escaped)
+		}
+	}
+}
+
+func TestBatchHTMLReportKeepsGitLabColumnsForExistingOperations(t *testing.T) {
+	report := exampleBatchReport()
+	report.Operation = "tag"
+	report.Results = []result{{Project: "group/service", Operation: "tag", Reference: "main", Commit: testSHA, CommitTitle: "fix: keep the existing report layout", Tag: "v1", Status: "created"}}
+	var out bytes.Buffer
+	if err := renderBatchReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	html := out.String()
+	for _, text := range []string{"Batch tag creation", "<dt>GitLab server</dt>", ">Repository</th>", ">Source / commit</th>", "fix: keep the existing report layout", testSHA, "Git tag created.", "Results follow the selected configuration order."} {
+		if !strings.Contains(html, text) {
+			t.Errorf("existing GitLab report lost %q", text)
+		}
+	}
+	if strings.Contains(html, "<dt>Docker target</dt>") || strings.Contains(html, ">Image ID</th>") || strings.Contains(html, "<dt>Selection</dt>") {
+		t.Error("existing GitLab report acquired image-deletion-only fields")
+	}
+}

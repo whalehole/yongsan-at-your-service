@@ -90,7 +90,7 @@ func New(options Options) *cobra.Command {
 		interactive: func() bool { return options.Interactive && !a.nonInteractive },
 	}
 	root := &cobra.Command{
-		Use: "yas", Short: "Concurrent GitLab tagging, Docker builds, and release scans",
+		Use: "yas", Short: "GitLab tagging, Docker image operations, and release notes",
 		Long: "Tag GitLab repositories, build Docker images, and collect release commits from exact revisions.\nRead working_directory from yas.yaml beside the real executable. Configuration and relative paths use that directory, defaulting to the binary's directory.",
 		Args: cobra.NoArgs, SilenceErrors: true, SilenceUsage: true,
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
@@ -104,7 +104,7 @@ func New(options Options) *cobra.Command {
 	f.StringVar(&a.tokenEnv, "token-env", "", "Override the environment variable containing the GitLab token")
 	f.StringVar(&a.timeout, "timeout", "", "Time limit for each repository job (for example 2m or 30m)")
 	f.StringVar(&a.format, "format", "text", "Result format: text or json")
-	f.BoolVar(&a.dryRun, "dry-run", false, "Show planned work without creating/deleting tags or building images")
+	f.BoolVar(&a.dryRun, "dry-run", false, "Show planned work without changing Git tags, building images, or deleting Docker images")
 	f.BoolVar(&a.nonInteractive, "non-interactive", false, "Fail on missing required inputs instead of prompting")
 	f.BoolVar(&a.noProgress, "no-progress", false, "Hide live operation progress (Docker logs and final results remain)")
 
@@ -116,11 +116,16 @@ func New(options Options) *cobra.Command {
 	releaseScan, releaseRender := a.releaseScan(), a.releaseRender()
 	releaseCmd := &cobra.Command{Use: "release", Short: "Scan release commits and generate HTML release notes", Args: cobra.NoArgs}
 	releaseCmd.AddCommand(releaseScan, releaseRender)
+	imageDeleteBatch := a.deleteDockerImages()
+	imageDelete := &cobra.Command{Use: "delete", Short: "Delete matching image references from the selected Docker daemon", Args: cobra.NoArgs}
+	imageDelete.AddCommand(imageDeleteBatch)
+	image := &cobra.Command{Use: "image", Aliases: []string{"images"}, Short: "Manage images in the selected Docker daemon", Args: cobra.NoArgs}
+	image.AddCommand(imageDelete)
 	deleteCmd := &cobra.Command{Use: "delete", Short: "Delete a named Git tag", Args: cobra.NoArgs}
 	deleteCmd.AddCommand(deleteOne, deleteBatch)
 	tag.AddCommand(tagOne, tagBatch, deleteCmd)
 	build.AddCommand(buildOne, buildBatch)
-	root.AddCommand(tag, build, releaseCmd, a.configCommand())
+	root.AddCommand(tag, build, image, releaseCmd, a.configCommand())
 	root.AddCommand(&cobra.Command{
 		Use: "version", Short: "Print the application version", Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -135,12 +140,12 @@ func New(options Options) *cobra.Command {
 		index, err := a.prompt.choose(cmd.Context(), "Choose an operation:", []string{
 			"Tag one repository", "Tag repositories from config", "Build one Docker image", "Build Docker images from config",
 			"Delete a tag from one repository", "Delete a tag from tagging repositories",
-			"Scan release changes into YAML", "Generate HTML release notes",
+			"Scan release changes into YAML", "Generate HTML release notes", "Delete Docker images",
 		})
 		if err != nil {
 			return usageError(err)
 		}
-		selected := []*cobra.Command{tagOne, tagBatch, buildOne, buildBatch, deleteOne, deleteBatch, releaseScan, releaseRender}[index]
+		selected := []*cobra.Command{tagOne, tagBatch, buildOne, buildBatch, deleteOne, deleteBatch, releaseScan, releaseRender, imageDeleteBatch}[index]
 		selected.SetContext(cmd.Context())
 		return selected.RunE(selected, nil)
 	}

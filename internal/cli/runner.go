@@ -19,6 +19,7 @@ type result struct {
 	CommitTitle      string `json:"commit_title,omitempty"`
 	Tag              string `json:"tag,omitempty"`
 	Image            string `json:"image,omitempty"`
+	ImageID          string `json:"image_id,omitempty"`
 	BuildStatus      string `json:"build_status,omitempty"`
 	SaveStatus       string `json:"save_status,omitempty"`
 	Archive          string `json:"archive,omitempty"`
@@ -75,6 +76,10 @@ func writeResults(out io.Writer, format string, results []result) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(results)
 	}
+	if len(results) == 0 {
+		_, err := fmt.Fprintln(out, "0 total; no jobs were selected.")
+		return err
+	}
 	for _, r := range results {
 		if r.BatchID != "" {
 			if _, err := fmt.Fprintf(out, "Image archive batch: %s\nArchive directory: %s\n\n", r.BatchID, r.ArchiveDirectory); err != nil {
@@ -84,7 +89,12 @@ func writeResults(out io.Writer, format string, results []result) error {
 		}
 	}
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "PROJECT\tSTATUS\tCOMMIT\tTARGET")
+	imageDeletion := len(results) > 0 && results[0].Operation == "image-delete"
+	if imageDeletion {
+		fmt.Fprintln(w, "IMAGE REPOSITORY\tSTATUS\tIMAGE ID\tIMAGE")
+	} else {
+		fmt.Fprintln(w, "PROJECT\tSTATUS\tCOMMIT\tTARGET")
+	}
 	counts := map[string]int{}
 	saveCounts := map[string]int{}
 	completedBuilds, requestedSaves := 0, 0
@@ -93,7 +103,11 @@ func writeResults(out io.Writer, format string, results []result) error {
 		if r.Image != "" {
 			target = r.Image
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.Project, r.Status, r.Commit, target)
+		identifier := r.Commit
+		if imageDeletion {
+			identifier = r.ImageID
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.Project, r.Status, identifier, target)
 		if r.SaveStatus != "" {
 			requestedSaves++
 			saveCounts[r.SaveStatus]++

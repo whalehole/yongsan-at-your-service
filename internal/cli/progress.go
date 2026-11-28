@@ -45,7 +45,7 @@ func (a *app) progressJobs(jobs []job, concurrency int) ([]job, func() error) {
 			time.Now().Format("15:04:05.000"), id+1, len(jobs), clean(r.Operation), clean(r.Project), clean(target), event, clean(detail), active, completed, len(jobs))
 	}
 	a.logMu.Lock()
-	_, outputErr = fmt.Fprintf(a.options.Err, "Running %d repository job(s), concurrency=%d (maximum simultaneous jobs).\n", len(jobs), concurrency)
+	_, outputErr = fmt.Fprintf(a.options.Err, "Running %d job(s), concurrency=%d (maximum simultaneous jobs).\n", len(jobs), concurrency)
 	a.logMu.Unlock()
 	wrapped := make([]job, len(jobs))
 	for i, original := range jobs {
