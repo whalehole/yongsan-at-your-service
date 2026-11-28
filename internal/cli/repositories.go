@@ -105,8 +105,23 @@ func (a *app) listRepositories() *cobra.Command {
 					return r
 				}
 				if found {
-					r.Status, r.Commit, r.CommitTitle = "found", commit.SHA, commit.Title
+					r.Commit, r.CommitTitle = commit.SHA, commit.Title
 					r.Message = fmt.Sprintf("Tag %q exists in repository %q at commit %s.", tag, r.Project, r.Commit)
+					progress(ctx, r, "finding all other tags on the selected tag's commit")
+					tags, err := client.TagsAtCommit(ctx, project.PathWithNamespace, commit.SHA)
+					if err != nil {
+						r.AccompanyingTagsStatus = "failed"
+						r.AccompanyingTagsError = err.Error()
+						r.Error = fmt.Sprintf("Tag %q was found in repository %q at commit %s, but its accompanying tags could not be retrieved completely: %v", tag, r.Project, r.Commit, err)
+						return r
+					}
+					r.AccompanyingTags = make([]string, 0, len(tags))
+					for _, companion := range tags {
+						if companion != tag {
+							r.AccompanyingTags = append(r.AccompanyingTags, companion)
+						}
+					}
+					r.Status, r.AccompanyingTagsStatus = "found", "complete"
 				} else {
 					r.Status = "skipped"
 					r.Message = fmt.Sprintf("Tag %q does not exist in repository %q; repository access was verified.", tag, r.Project)

@@ -224,7 +224,11 @@ Tag lookups default to concurrency `8` and a `2m` job timeout, with positive `--
 | --- | --- |
 | `found` | The exact Git tag exists; the result includes its commit SHA and title when available |
 | `skipped` | The tag was confirmed absent in an accessible repository |
-| `failed` | The tag lookup or access verification failed |
+| `failed` | The tag lookup, access verification, or accompanying-tag listing failed |
+
+The report's **Git tag** cell distinguishes the selected tag from a sorted, unique list of all other tags pointing to that same commit. Matching uses resolved commit IDs for lightweight and annotated tags; tags on ancestors or different commits are excluded.
+
+JSON results expose `accompanying_tags`, `accompanying_tags_status` (`complete` or `failed`), and `accompanying_tags_error` on failure. If this listing fails, the selected tag's SHA and title are retained, the row is `failed`, and the report marks the other-tag list as unavailable or incomplete. A failed listing is not treated as proof that no other tags exist, and other repositories continue to be checked.
 
 Tag absence is a normal result. Other repository checks continue after an individual failure; any failed check returns exit code `1`, while a completed listing with only found/absent results returns `0`. Group discovery failures return `1` before repository jobs begin and do not create a report. `--dry-run` is rejected because this command already performs read-only lookups and produces the requested results/report.
 

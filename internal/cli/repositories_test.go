@@ -73,6 +73,21 @@ func newRepositoryListFixture(t *testing.T, mode string) *repositoryListFixture 
 				return
 			}
 			if r.URL.Path == project+"/repository/tags" {
+				if r.URL.Query().Get("per_page") == "100" {
+					if mode == "companion denied" && name == "m-denied" {
+						w.WriteHeader(http.StatusForbidden)
+						return
+					}
+					tags := []map[string]any{{"name": repositoryListTag, "commit": map[string]string{"id": testSHA}}}
+					if mode != "no companions" {
+						for _, tag := range []string{"v1.2.9", "deployment/production"} {
+							tags = append(tags, map[string]any{"name": tag, "commit": map[string]string{"id": testSHA}})
+						}
+						tags = append(tags, map[string]any{"name": "v1.2.8", "commit": map[string]string{"id": strings.Repeat("b", 40)}})
+					}
+					_ = json.NewEncoder(w).Encode(tags)
+					return
+				}
 				fmt.Fprint(w, `[]`)
 				return
 			}
@@ -282,5 +297,61 @@ func TestRepositoryListWorkspaceReportsAndOpeningFlags(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(workspace, "yas.yaml")); err != nil || string(data) != configuration {
 		t.Fatalf("lookup changed the config: %v", err)
+	}
+}
+
+func TestRepositoryListAccompanyingTagsShareCommitAndExcludeSelectedTag(t *testing.T) {
+	for _, mode := range []string{"normal", "no companions", "companion denied"} {
+		t.Run(mode, func(t *testing.T) {
+			workingDirectory(t)
+			fixture := newRepositoryListFixture(t, mode)
+			writeRepositoryListConfig(t, fixture)
+			output, _, err := executeTest([]string{"repo", "list", "--group", repositoryListGroup, "--tag", repositoryListTag, "--format", "json", "--no-progress"}, "", false)
+			if mode == "companion denied" && ExitCode(err) != 1 || mode != "companion denied" && err != nil {
+				t.Fatalf("unexpected result for %s: %v (%s)", mode, err, output)
+			}
+			results := decodeImageDeleteResults(t, output)
+			if len(results) != 3 {
+				t.Fatalf("missing results: %s", output)
+			}
+			if results[0].Status != "skipped" || results[0].AccompanyingTagsStatus != "" {
+				t.Fatalf("absent tag should not scan accompanying tags: %+v", results[0])
+			}
+			for _, result := range results[1:] {
+				if result.Commit != testSHA || result.CommitTitle != repositoryListTitle || result.Tag != repositoryListTag {
+					t.Fatalf("selected tag metadata was changed: %+v", result)
+				}
+				if mode == "companion denied" && strings.HasSuffix(result.Project, "/m-denied") {
+					if result.Status != "failed" || result.AccompanyingTagsStatus != "failed" || len(result.AccompanyingTags) != 0 || !strings.Contains(result.AccompanyingTagsError, "403") || !strings.Contains(result.Error, "was found") {
+						t.Fatalf("incomplete tag list lost confirmed presence or claimed completeness: %+v", result)
+					}
+					continue
+				}
+				if result.Status != "found" || result.AccompanyingTagsStatus != "complete" || result.AccompanyingTagsError != "" {
+					t.Fatalf("accompanying-tag metadata was not completed: %+v", result)
+				}
+				want := "deployment/production,v1.2.9"
+				if mode == "no companions" {
+					want = ""
+				}
+				if strings.Join(result.AccompanyingTags, ",") != want {
+					t.Fatalf("selected or different-commit tags appeared, or tags were not sorted: %+v", result)
+				}
+			}
+			paths, _ := filepath.Glob("reports/*.html")
+			if len(paths) != 1 {
+				t.Fatalf("report missing: %v", paths)
+			}
+			report := readReportHTML(t, paths[0])
+			if !strings.Contains(report, "Selected tag") || !strings.Contains(report, repositoryListTag) {
+				t.Fatal("report did not distinguish the selected tag")
+			}
+			if mode != "no companions" && (!strings.Contains(report, "deployment/production") || !strings.Contains(report, "v1.2.9")) {
+				t.Fatal("report omitted accompanying tags")
+			}
+			if strings.Contains(report, "v1.2.8") {
+				t.Fatal("report included a tag on a different commit")
+			}
+		})
 	}
 }

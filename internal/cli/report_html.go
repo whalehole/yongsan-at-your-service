@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"sort"
 	"strings"
 	"time"
 )
@@ -33,6 +34,8 @@ type reportRow struct {
 	Outcome, Class, Detail                                            string
 	Target, TargetLabel                                               string
 	CommitLabel, ResolvedCommitTitle                                  string
+	SelectedTagConfirmed                                              bool
+	OtherTags                                                         []string
 	BuildOutcome, BuildClass, SaveOutcome, SaveClass, SaveExplanation string
 }
 
@@ -43,6 +46,8 @@ func renderBatchReport(out io.Writer, report batchReport) error {
 		BatchID, ArchiveDirectory                          string
 		ImageDelete                                        bool
 		RepositoryLookup                                   bool
+		ConfirmedMatches, CompanionFailures                int
+		PresenceFailures                                   int
 		Summary                                            reportSummary
 		Saves                                              reportSaveSummary
 		Rows                                               []reportRow
@@ -123,13 +128,34 @@ func renderBatchReport(out io.Writer, report batchReport) error {
 			}
 		}
 		if data.RepositoryLookup || r.Operation == "repo-list" {
+			row.SelectedTagConfirmed = r.Status == "found" || r.Commit != "" && r.AccompanyingTagsStatus == "failed"
+			if row.SelectedTagConfirmed {
+				data.ConfirmedMatches++
+			}
+			if row.SelectedTagConfirmed && r.AccompanyingTagsStatus == "complete" {
+				seen := make(map[string]bool)
+				for _, tag := range r.AccompanyingTags {
+					if strings.TrimSpace(tag) != "" && tag != r.Tag && !seen[tag] {
+						seen[tag] = true
+						row.OtherTags = append(row.OtherTags, tag)
+					}
+				}
+				sort.Strings(row.OtherTags)
+			}
 			switch r.Status {
 			case "skipped":
 				row.Outcome = "ABSENT"
 				row.Detail = fmt.Sprintf("Tag %q is absent from repository %q; its absence was verified.", r.Tag, r.Project)
 			case "failed":
-				row.Outcome = "FAILED"
-				row.Detail = "The tag lookup did not complete; tag presence is unknown."
+				if row.SelectedTagConfirmed {
+					data.CompanionFailures++
+					row.Outcome = "INCOMPLETE"
+					row.Detail = fmt.Sprintf("Selected tag %q is confirmed at commit %s, but the lookup of other tags on this commit did not complete.", r.Tag, r.Commit)
+				} else {
+					data.PresenceFailures++
+					row.Outcome = "FAILED"
+					row.Detail = "The tag lookup did not complete; tag presence is unknown."
+				}
 			}
 		}
 		if r.Message != "" {
@@ -137,6 +163,8 @@ func renderBatchReport(out io.Writer, report batchReport) error {
 		}
 		if r.Error != "" {
 			row.Detail = r.Error
+		} else if row.SelectedTagConfirmed && r.AccompanyingTagsStatus == "failed" && r.AccompanyingTagsError != "" {
+			row.Detail = fmt.Sprintf("Selected tag %q is confirmed at commit %s. Other tags could not be listed: %s", r.Tag, r.Commit, r.AccompanyingTagsError)
 		}
 		switch r.BuildStatus {
 		case "built":
@@ -209,7 +237,7 @@ header{display:flex;justify-content:space-between;align-items:flex-start;gap:20p
 .notice{border-left:4px solid #bc881a;background:#fff9e9;padding:14px 16px;line-height:1.6;margin:0 0 22px}.summary{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:24px 0}.summary.repository-lookup{grid-template-columns:repeat(4,1fr)}.lookup-note{margin:0 0 22px;color:#536071;line-height:1.6}.stat{border:1px solid #dce2e9;border-radius:7px;padding:14px 16px}.stat strong{display:block;font-size:29px;line-height:1.1;margin-bottom:6px}.stat span{font-size:12px;font-weight:650;text-transform:uppercase;letter-spacing:.5px}
 dl{display:grid;grid-template-columns:130px minmax(0,1fr) 130px minmax(0,1fr);gap:9px 14px;font-size:13px;margin:0}dt{color:#5b6879}dd{margin:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
 .table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;table-layout:fixed;font-size:13px}th{text-align:left;background:#f3f5f8;color:#465467;font-size:11px;text-transform:uppercase;letter-spacing:.5px;padding:11px 10px;border-bottom:2px solid #dce2e9}td{vertical-align:top;padding:14px 10px;border-bottom:1px solid #e1e6ec;overflow-wrap:anywhere;line-height:1.5}th:nth-child(1){width:17%}th:nth-child(2){width:11%}th:nth-child(3){width:21%}th:nth-child(4){width:17%}th:nth-child(5){width:8%}th:nth-child(6){width:26%}
-code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;overflow-wrap:anywhere}.muted{color:#687586}.sub{display:block;margin-top:5px;font-size:11px;color:#687586}.commit-title{display:block;margin:3px 0 5px;font-weight:650;white-space:pre-wrap;overflow-wrap:anywhere}.detail{white-space:pre-wrap}.stage{margin-bottom:7px}.stage .badge{padding:2px 6px;font-size:10px}.stage-label{display:inline-block;min-width:77px;font-weight:650}.archive{display:block;margin:5px 0 10px}.duration{font-variant-numeric:tabular-nums}.save-summary{padding:13px 16px;border:1px solid #dce2e9;border-radius:7px;line-height:1.7;margin:0 0 24px}.save-summary strong{margin-right:7px}.save-summary span{display:inline-block;margin-right:15px}footer{margin-top:22px;padding-top:16px;border-top:1px solid #e1e6ec;color:#687586;font-size:12px;line-height:1.6}
+code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;overflow-wrap:anywhere}.muted{color:#687586}.sub{display:block;margin-top:5px;font-size:11px;color:#687586}.commit-title{display:block;margin:3px 0 5px;font-weight:650;white-space:pre-wrap;overflow-wrap:anywhere}.selected-tag-label{display:block;color:#245ba8;font-size:11px;font-weight:750;margin-bottom:5px}.tag-chip{display:inline-block;max-width:100%;padding:3px 7px;border:1px solid #d7dfe8;border-radius:5px;background:#f3f5f8;color:#465467;white-space:normal;overflow-wrap:anywhere;line-height:1.5}.tag-chip.selected-tag{background:#edf4ff;border-color:#b9cfee;color:#204f91;font-weight:750}.other-tags-label{display:block;margin:12px 0 5px;font-size:11px;font-weight:650;color:#5b6879;line-height:1.5}.other-tags{display:flex;flex-wrap:wrap;gap:5px;list-style:none;margin:0;padding:0}.other-tags li{min-width:0;max-width:100%}.tag-state{display:block;margin-top:8px;color:#687586;font-size:11px;line-height:1.6}.tag-state.incomplete-tags{color:#a22229}.tag-confirmed{display:block;font-weight:650;color:#17613a}.detail{white-space:pre-wrap}.stage{margin-bottom:7px}.stage .badge{padding:2px 6px;font-size:10px}.stage-label{display:inline-block;min-width:77px;font-weight:650}.archive{display:block;margin:5px 0 10px}.duration{font-variant-numeric:tabular-nums}.save-summary{padding:13px 16px;border:1px solid #dce2e9;border-radius:7px;line-height:1.7;margin:0 0 24px}.save-summary strong{margin-right:7px}.save-summary span{display:inline-block;margin-right:15px}footer{margin-top:22px;padding-top:16px;border-top:1px solid #e1e6ec;color:#687586;font-size:12px;line-height:1.6}
 @media(max-width:760px){body{padding:12px}main{padding:18px}header{display:block}header>.badge{margin-top:16px}h1{font-size:24px}.summary{gap:6px}.stat{padding:10px 6px}.stat strong{font-size:23px}.stat span{font-size:10px}dl{grid-template-columns:105px minmax(0,1fr)}table{min-width:950px}}
 @media print{@page{size:A4 landscape;margin:12mm}:root{font-size:11px;background:white}body{padding:0}main{max-width:none;border:0;border-radius:0;padding:0}h1{font-size:23px}header{margin-bottom:18px}.summary{margin:18px 0}.stat{padding:10px 12px}.stat strong{font-size:24px}.table-wrap{overflow:visible}table{font-size:10px;min-width:0}th,td{padding:9px 7px}code{font-size:9px}.badge{font-size:10px}.sub{font-size:9px}thead{display:table-header-group}tr{break-inside:avoid}footer{font-size:10px}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 </style>
@@ -228,12 +256,12 @@ code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;o
 </dl>
 <section class="summary{{if .RepositoryLookup}} repository-lookup{{end}}" aria-label="Result totals">
 <div class="stat"><strong>{{.Summary.Total}}</strong><span>{{if .RepositoryLookup}}Checked{{else}}Total{{end}}</span></div>
-<div class="stat pass"><strong>{{.Summary.Passed}}</strong><span>{{if .RepositoryLookup}}Matched{{else}}Passed{{end}}</span></div>
-<div class="stat fail"><strong>{{.Summary.Failed}}</strong><span>Failed</span></div>
+<div class="stat pass"><strong>{{if .RepositoryLookup}}{{.ConfirmedMatches}}{{else}}{{.Summary.Passed}}{{end}}</strong><span>{{if .RepositoryLookup}}Matched{{else}}Passed{{end}}</span></div>
+<div class="stat fail"><strong>{{.Summary.Failed}}</strong><span>{{if and .RepositoryLookup .CompanionFailures}}Failed / incomplete{{else}}Failed{{end}}</span></div>
 <div class="stat skipped"><strong>{{.Summary.Skipped}}</strong><span>{{if .RepositoryLookup}}Absent{{else}}Skipped{{end}}</span></div>
 {{if not .RepositoryLookup}}<div class="stat planned"><strong>{{.Summary.Planned}}</strong><span>Planned</span></div>{{end}}
 </section>
-{{if .RepositoryLookup}}{{if .Summary.Failed}}<p class="notice">Some tag lookups did not complete. Failed rows do not establish whether the selected tag is present.</p>{{end}}{{if and .Summary.Total (eq .Summary.Passed 0)}}<p class="lookup-note">{{if .Summary.Failed}}No matching repositories were confirmed; tag presence remains unknown for failed lookups.{{else}}No checked repositories contain the selected Git tag.{{end}}</p>{{end}}{{end}}
+{{if .RepositoryLookup}}{{if .CompanionFailures}}<p class="notice">Some selected tags were confirmed, but the lookup of other tags on the same commit failed. Those rows are marked INCOMPLETE.{{if .PresenceFailures}} Other failed rows could not establish selected-tag presence.{{end}}</p><p class="lookup-note">Matched and failed/incomplete counts overlap when the lookup of other tags fails.</p>{{else}}{{if .Summary.Failed}}<p class="notice">Some tag lookups did not complete. Failed rows do not establish whether the selected tag is present.</p>{{end}}{{end}}{{if and .Summary.Total (eq .ConfirmedMatches 0)}}<p class="lookup-note">{{if .PresenceFailures}}No matching repositories were confirmed; tag presence remains unknown for failed lookups.{{else}}No checked repositories contain the selected Git tag.{{end}}</p>{{end}}{{end}}
 {{if .Saves.Total}}<section class="save-summary" aria-label="Docker save totals"><strong>Docker save</strong><span>{{.Saves.Saved}} saved</span><span>{{.Saves.Failed}} failed</span><span>{{.Saves.Planned}} planned</span><span>{{.Saves.NotRun}} not run</span></section>{{end}}
 <h2>{{if .ImageDelete}}Image deletion results{{else}}{{if .RepositoryLookup}}Repository tag coverage{{else}}Repository results{{end}}{{end}}</h2>
 <div class="table-wrap"><table>
@@ -241,9 +269,9 @@ code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;o
 <tbody>{{range .Rows}}
 <tr><td><span class="muted">{{.Number}}.</span> <strong>{{.Project}}</strong></td><td><span class="badge {{.Class}}">{{.Outcome}}</span><span class="sub">{{.Status}}</span></td>
 <td>{{if $.ImageDelete}}{{if .ImageID}}<code>{{.ImageID}}</code>{{else}}<span class="muted">—</span>{{end}}{{else}}{{if not $.RepositoryLookup}}{{if .Reference}}<code>{{.Reference}}</code>{{else}}<span class="muted">—</span>{{end}}{{end}}{{if .Commit}}<span class="sub">{{.CommitLabel}}</span><span class="commit-title">{{.ResolvedCommitTitle}}</span><code>{{.Commit}}</code>{{else}}{{if $.RepositoryLookup}}<span class="muted">—</span>{{end}}{{end}}{{end}}</td>
-<td>{{if .Target}}<span class="sub">{{.TargetLabel}}</span><code>{{.Target}}</code>{{else}}<span class="muted">—</span>{{end}}</td><td class="duration">{{.Duration}}</td><td>{{if .BuildOutcome}}<div class="stage"><span class="stage-label">Build</span> <span class="badge {{.BuildClass}}">{{.BuildOutcome}}</span></div>{{end}}{{if .SaveOutcome}}<div class="stage"><span class="stage-label">Docker save</span> <span class="badge {{.SaveClass}}">{{.SaveOutcome}}</span></div>{{end}}{{if and (eq .SaveStatus "saved") .Archive}}<span class="sub">Image archive</span><code class="archive">{{.Archive}}</code>{{end}}{{if .SaveExplanation}}<p class="detail">{{.SaveExplanation}}</p>{{end}}<div class="detail">{{.Detail}}</div></td></tr>
+<td>{{if $.RepositoryLookup}}<span class="selected-tag-label">Selected tag</span>{{if .Tag}}<code class="tag-chip selected-tag">{{.Tag}}</code>{{else}}<span class="muted">—</span>{{end}}{{if eq .Status "skipped"}}<span class="tag-state">Selected tag is absent.</span>{{else}}{{if .SelectedTagConfirmed}}{{if eq .AccompanyingTagsStatus "complete"}}{{if .OtherTags}}<span class="other-tags-label">Other tags on this commit ({{len .OtherTags}})</span><ul class="other-tags" aria-label="Other tags on this commit">{{range .OtherTags}}<li><code class="tag-chip">{{.}}</code></li>{{end}}</ul>{{else}}<span class="tag-state">No other tags on this commit</span>{{end}}{{else}}{{if eq .AccompanyingTagsStatus "failed"}}<span class="tag-state incomplete-tags"><strong class="tag-confirmed">Selected tag confirmed.</strong>Other tags on this commit unavailable (lookup failed).</span>{{else}}<span class="tag-state">Other tags on this commit were not checked.</span>{{end}}{{end}}{{else}}<span class="tag-state incomplete-tags">Selected tag lookup unavailable; presence could not be determined.</span>{{end}}{{end}}{{else}}{{if .Target}}<span class="sub">{{.TargetLabel}}</span><code>{{.Target}}</code>{{else}}<span class="muted">—</span>{{end}}{{end}}</td><td class="duration">{{.Duration}}</td><td>{{if .BuildOutcome}}<div class="stage"><span class="stage-label">Build</span> <span class="badge {{.BuildClass}}">{{.BuildOutcome}}</span></div>{{end}}{{if .SaveOutcome}}<div class="stage"><span class="stage-label">Docker save</span> <span class="badge {{.SaveClass}}">{{.SaveOutcome}}</span></div>{{end}}{{if and (eq .SaveStatus "saved") .Archive}}<span class="sub">Image archive</span><code class="archive">{{.Archive}}</code>{{end}}{{if .SaveExplanation}}<p class="detail">{{.SaveExplanation}}</p>{{end}}<div class="detail">{{.Detail}}</div></td></tr>
 {{else}}<tr><td colspan="6">{{if .ImageDelete}}No matching Docker image references were found.{{else}}{{if .RepositoryLookup}}No direct repositories were found in the selected group.{{else}}No repository jobs were selected.{{end}}{{end}}</td></tr>{{end}}</tbody>
 </table></div>
-<footer>{{if .RepositoryLookup}}MATCHED means the selected Git tag was found. ABSENT means its absence was verified. FAILED means tag presence could not be determined. This is a read-only lookup. No repositories, Git tags, or Docker images were changed.<br>Results follow the checked repository list.{{else}}{{if .ImageDelete}}PASS means the selected Docker image reference was removed. Other tags, references, containers, or shared layers may retain the underlying image data. Removal never uses force. SKIPPED means the reference was already absent. PLANNED means no image reference was removed.<br>Results follow the selected Docker image list.{{else}}{{if .Saves.Total}}Overall PASS means the requested operation completed, including Docker save when requested. Build and Docker save outcomes are shown separately.{{else}}PASS means a tag was created or deleted, or an image was built.{{end}} SKIPPED means no change was needed. PLANNED means the operation was not executed.<br>Results follow the selected configuration order.{{end}}{{end}} Job durations exclude time waiting for a worker. Open this file in a browser to read it or print it to PDF.</footer>
+<footer>{{if .RepositoryLookup}}MATCHED means the selected Git tag was confirmed. ABSENT means its absence was verified. FAILED or INCOMPLETE means a requested lookup could not be completed; consult the row for selected-tag presence and other-tag availability. Other tags are shown only when they point to the same exact commit as the selected tag. This is a read-only lookup. No repositories, Git tags, or Docker images were changed.<br>Results follow the checked repository list.{{else}}{{if .ImageDelete}}PASS means the selected Docker image reference was removed. Other tags, references, containers, or shared layers may retain the underlying image data. Removal never uses force. SKIPPED means the reference was already absent. PLANNED means no image reference was removed.<br>Results follow the selected Docker image list.{{else}}{{if .Saves.Total}}Overall PASS means the requested operation completed, including Docker save when requested. Build and Docker save outcomes are shown separately.{{else}}PASS means a tag was created or deleted, or an image was built.{{end}} SKIPPED means no change was needed. PLANNED means the operation was not executed.<br>Results follow the selected configuration order.{{end}}{{end}} Job durations exclude time waiting for a worker. Open this file in a browser to read it or print it to PDF.</footer>
 </main></body></html>
 `))

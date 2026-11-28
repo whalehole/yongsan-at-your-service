@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	stdhtml "html"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -647,5 +648,136 @@ func TestBatchHTMLReportRepositoryLookupEscapesMetadataAndFallbackTitles(t *test
 		if !strings.Contains(html, escaped) {
 			t.Errorf("lookup report omitted escaped content/title fallback %q", escaped)
 		}
+	}
+}
+
+func TestBatchHTMLReportAccompanyingTagsAreVisibleSortedAndDistinct(t *testing.T) {
+	report := exampleBatchReport()
+	report.Operation = "repo-list"
+	tags := []string{"z-last", "release-v2", "a-first", "z-last", "release/candidate", "", "  "}
+	report.Results = []result{{Project: "team/service", Operation: "repo-list", Tag: "release-v2", Commit: testSHA, CommitTitle: "fix: keep the selected commit title", Status: "found", AccompanyingTags: append([]string{}, tags...), AccompanyingTagsStatus: "complete"}}
+	var out bytes.Buffer
+	if err := renderBatchReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	html := out.String()
+	for _, value := range []string{`class="selected-tag-label">Selected tag</span>`, `class="tag-chip selected-tag">release-v2</code>`, "Other tags on this commit (3)", `aria-label="Other tags on this commit"`, "fix: keep the selected commit title", "<code>" + testSHA + "</code>"} {
+		if !strings.Contains(html, value) {
+			t.Errorf("missing selected/companion tag presentation %q", value)
+		}
+	}
+	start := strings.Index(html, `<ul class="other-tags"`)
+	if start < 0 {
+		t.Fatal("other tags are not shown in a visible list")
+	}
+	list := html[start:]
+	list = list[:strings.Index(list, "</ul>")]
+	if strings.Count(list, "<li>") != 3 || strings.Contains(list, "release-v2") || strings.Contains(list, "<details") || strings.Contains(list, " hidden") {
+		t.Fatalf("companion tags were duplicated, hidden, or include the selected tag: %s", list)
+	}
+	previous := -1
+	for _, tag := range []string{"a-first", "release/candidate", "z-last"} {
+		index := strings.Index(list, ">"+tag+"</code>")
+		if index <= previous {
+			t.Fatalf("companion tags are not sorted: %s", list)
+		}
+		previous = index
+	}
+	if !reflect.DeepEqual(report.Results[0].AccompanyingTags, tags) {
+		t.Error("rendering mutated the original accompanying-tag metadata")
+	}
+}
+
+func TestBatchHTMLReportEmptyAccompanyingTagsRequireCompletedLookup(t *testing.T) {
+	for _, tc := range []struct {
+		name, status, accompanyingStatus string
+		commit                           string
+		tags                             []string
+		want                             string
+		emptyConfirmed                   bool
+	}{
+		{name: "complete empty", status: "found", accompanyingStatus: "complete", commit: testSHA, want: "No other tags on this commit", emptyConfirmed: true},
+		{name: "selected tag excluded", status: "found", accompanyingStatus: "complete", commit: testSHA, tags: []string{"release-v2", "release-v2"}, want: "No other tags on this commit", emptyConfirmed: true},
+		{name: "legacy lookup not recorded", status: "found", commit: testSHA, want: "Other tags on this commit were not checked."},
+		{name: "selected tag absent", status: "skipped", want: "Selected tag is absent."},
+		{name: "selected lookup failed", status: "failed", want: "Selected tag lookup unavailable; presence could not be determined."},
+		{name: "other-tag lookup failed", status: "failed", accompanyingStatus: "failed", commit: testSHA, tags: []string{"partial-result-must-not-look-complete"}, want: "Other tags on this commit unavailable (lookup failed)."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			report := exampleBatchReport()
+			report.Operation = "repo-list"
+			report.Results = []result{{Project: "team/service", Operation: "repo-list", Tag: "release-v2", Commit: tc.commit, Status: tc.status, AccompanyingTagsStatus: tc.accompanyingStatus, AccompanyingTags: tc.tags}}
+			var out bytes.Buffer
+			if err := renderBatchReport(&out, report); err != nil {
+				t.Fatal(err)
+			}
+			html := out.String()
+			if !strings.Contains(html, tc.want) || strings.Contains(html, "No other tags on this commit") != tc.emptyConfirmed {
+				t.Fatalf("missing or misleading accompanying-tag state for %s", tc.name)
+			}
+			if strings.Contains(html, `<ul class="other-tags"`) || strings.Contains(html, "partial-result-must-not-look-complete") {
+				t.Error("empty, absent, unchecked, or incomplete data was shown as a complete companion list")
+			}
+		})
+	}
+}
+
+func TestBatchHTMLReportAccompanyingFailureKeepsConfirmedSelectedTag(t *testing.T) {
+	report := exampleBatchReport()
+	report.Operation = "repo-list"
+	report.Results = []result{{Project: "team/service", Operation: "repo-list", Tag: "release-v2", Commit: testSHA, CommitTitle: "fix: original selected commit", Status: "failed", AccompanyingTagsStatus: "failed", AccompanyingTagsError: "GitLab could not list tags.", Error: "Selected tag was confirmed, but the full tag listing timed out."}}
+	var out bytes.Buffer
+	if err := renderBatchReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	html := out.String()
+	for _, value := range []string{">INCOMPLETE</span>", "Selected tag confirmed.", "Other tags on this commit unavailable (lookup failed).", "<strong>1</strong><span>Matched</span>", "<strong>1</strong><span>Failed / incomplete</span>", "Matched and failed/incomplete counts overlap", report.Results[0].Error, report.Results[0].CommitTitle, testSHA} {
+		if !strings.Contains(html, value) {
+			t.Errorf("confirmed selected-tag result was lost: missing %q", value)
+		}
+	}
+	for _, misleading := range []string{"No matching repositories were confirmed", "No checked repositories contain", "Failed rows do not establish whether", "FAILED means tag presence could not be determined", "The tag lookup did not complete; tag presence is unknown.", "No other tags on this commit"} {
+		if strings.Contains(html, misleading) {
+			t.Errorf("companion failure misreported confirmed tag presence: %q", misleading)
+		}
+	}
+	if strings.Contains(html, "Other tags could not be listed: GitLab could not list tags.") {
+		t.Error("fallback companion error replaced the full contextual error")
+	}
+}
+
+func TestBatchHTMLReportAccompanyingTagsEscapeMarkupAndPreserveLongLists(t *testing.T) {
+	report := exampleBatchReport()
+	report.Operation = "repo-list"
+	selected := `release-<selected>&"quoted"`
+	tags := []string{`<script>companion</script>`, `candidate&"quoted"`, strings.Repeat("long-tag-name-", 20)}
+	for i := 0; i < 25; i++ {
+		tags = append(tags, "visible-release-tag-"+strings.Repeat("x", i+1))
+	}
+	report.Results = []result{
+		{Project: "team/service", Operation: "repo-list", Tag: selected, Commit: testSHA, CommitTitle: "fix: preserve full provenance", Status: "found", AccompanyingTagsStatus: "complete", AccompanyingTags: tags},
+		{Project: "team/incomplete", Operation: "repo-list", Tag: "v2", Commit: testSHA, Status: "failed", AccompanyingTagsStatus: "failed", AccompanyingTagsError: `<img src=x onerror="error">`},
+	}
+	var out bytes.Buffer
+	if err := renderBatchReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	html := out.String()
+	if strings.Contains(html, "<script>") || strings.Contains(html, "<img src=x") || strings.Contains(html, "release-<selected>") {
+		t.Fatal("selected/companion tag names or errors became executable markup")
+	}
+	for _, escaped := range []string{"release-&lt;selected&gt;&amp;", "&lt;script&gt;companion&lt;/script&gt;", "&lt;img src=x", "Other tags on this commit (28)"} {
+		if !strings.Contains(html, escaped) {
+			t.Errorf("missing escaped/full-list content %q", escaped)
+		}
+	}
+	visible := stdhtml.UnescapeString(html)
+	for _, tag := range tags {
+		if !strings.Contains(visible, ">"+tag+"</code>") {
+			t.Errorf("companion list truncated or changed a tag %q", tag)
+		}
+	}
+	if !strings.Contains(visible, "Other tags could not be listed: "+report.Results[1].AccompanyingTagsError) {
+		t.Error("companion error fallback was not retained when no full operation error was available")
 	}
 }

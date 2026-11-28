@@ -9,27 +9,31 @@ import (
 	"sync"
 	"text/tabwriter"
 	"time"
+	"unicode"
 )
 
 type result struct {
-	Project          string `json:"project"`
-	Operation        string `json:"operation"`
-	Reference        string `json:"reference,omitempty"`
-	Commit           string `json:"commit,omitempty"`
-	CommitTitle      string `json:"commit_title,omitempty"`
-	Tag              string `json:"tag,omitempty"`
-	Image            string `json:"image,omitempty"`
-	ImageID          string `json:"image_id,omitempty"`
-	BuildStatus      string `json:"build_status,omitempty"`
-	SaveStatus       string `json:"save_status,omitempty"`
-	Archive          string `json:"archive,omitempty"`
-	SaveError        string `json:"save_error,omitempty"`
-	BatchID          string `json:"batch_id,omitempty"`
-	ArchiveDirectory string `json:"archive_directory,omitempty"`
-	Status           string `json:"status"`
-	Error            string `json:"error,omitempty"`
-	Message          string `json:"message,omitempty"`
-	Duration         string `json:"duration"`
+	Project                string   `json:"project"`
+	Operation              string   `json:"operation"`
+	Reference              string   `json:"reference,omitempty"`
+	Commit                 string   `json:"commit,omitempty"`
+	CommitTitle            string   `json:"commit_title,omitempty"`
+	Tag                    string   `json:"tag,omitempty"`
+	AccompanyingTags       []string `json:"accompanying_tags,omitempty"`
+	AccompanyingTagsStatus string   `json:"accompanying_tags_status,omitempty"`
+	AccompanyingTagsError  string   `json:"accompanying_tags_error,omitempty"`
+	Image                  string   `json:"image,omitempty"`
+	ImageID                string   `json:"image_id,omitempty"`
+	BuildStatus            string   `json:"build_status,omitempty"`
+	SaveStatus             string   `json:"save_status,omitempty"`
+	Archive                string   `json:"archive,omitempty"`
+	SaveError              string   `json:"save_error,omitempty"`
+	BatchID                string   `json:"batch_id,omitempty"`
+	ArchiveDirectory       string   `json:"archive_directory,omitempty"`
+	Status                 string   `json:"status"`
+	Error                  string   `json:"error,omitempty"`
+	Message                string   `json:"message,omitempty"`
+	Duration               string   `json:"duration"`
 }
 
 type job func(context.Context) result
@@ -99,6 +103,7 @@ func writeResults(out io.Writer, format string, results []result) error {
 		fmt.Fprintln(w, "PROJECT\tSTATUS\tCOMMIT\tTARGET")
 	}
 	counts := map[string]int{}
+	confirmedTags, incompleteTagLists := 0, 0
 	saveCounts := map[string]int{}
 	completedBuilds, requestedSaves := 0, 0
 	for _, r := range results {
@@ -120,14 +125,26 @@ func writeResults(out io.Writer, format string, results []result) error {
 				if strings.TrimSpace(title) == "" {
 					title = "Commit title unavailable"
 				}
-				title = strings.Map(func(char rune) rune {
-					if char < 32 || char == 127 || char == '\u2028' || char == '\u2029' {
-						return ' '
-					}
-					return char
-				}, title)
+				title = terminalTableText(title)
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Project, status, r.Tag, r.Commit, title)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Project, status, terminalTableText(r.Tag), r.Commit, title)
+			if r.Status == "found" || r.Commit != "" {
+				confirmedTags++
+			}
+			if r.AccompanyingTagsStatus == "complete" {
+				if len(r.AccompanyingTags) == 0 {
+					fmt.Fprintln(w, "  No other tags on this commit.")
+				} else {
+					labels := make([]string, len(r.AccompanyingTags))
+					for i, tag := range r.AccompanyingTags {
+						labels[i] = terminalTableText(tag)
+					}
+					fmt.Fprintf(w, "  Other tags on this commit: %s\n", strings.Join(labels, ", "))
+				}
+			} else if r.AccompanyingTagsStatus == "failed" {
+				incompleteTagLists++
+				fmt.Fprintln(w, "  Selected tag confirmed; accompanying tags could not be retrieved completely.")
+			}
 		} else {
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.Project, r.Status, identifier, target)
 		}
@@ -153,8 +170,11 @@ func writeResults(out io.Writer, format string, results []result) error {
 		return err
 	}
 	if repositoryLookup {
-		_, err := fmt.Fprintf(out, "\n%d checked; %d found, %d absent, %d failed.\n", len(results), counts["found"], counts["skipped"], counts["failed"])
-		if err == nil && counts["found"] == 0 {
+		_, err := fmt.Fprintf(out, "\n%d checked; %d found, %d absent, %d failed.\n", len(results), confirmedTags, counts["skipped"], counts["failed"])
+		if err == nil && incompleteTagLists > 0 {
+			_, err = fmt.Fprintln(out, "Found includes confirmed selected tags whose accompanying-tag lookup failed; these rows are also counted as failed.")
+		}
+		if err == nil && confirmedTags == 0 {
 			message := "No checked repositories contain the selected Git tag.\n"
 			if counts["failed"] > 0 {
 				message = "No matching repositories were confirmed; tag presence remains unknown for failed lookups.\n"
@@ -170,6 +190,15 @@ func writeResults(out io.Writer, format string, results []result) error {
 			completedBuilds, saveCounts["saved"], saveCounts["failed"], saveCounts["planned"], saveCounts["not-run"])
 	}
 	return err
+}
+
+func terminalTableText(value string) string {
+	return strings.Map(func(char rune) rune {
+		if unicode.IsControl(char) || char == '\u2028' || char == '\u2029' {
+			return ' '
+		}
+		return char
+	}, value)
 }
 
 // Every complete Docker log line is labeled and written under a shared lock.
