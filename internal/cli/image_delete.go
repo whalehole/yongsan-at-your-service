@@ -3,12 +3,15 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/yongsan/yongsan-at-your-service/internal/config"
 	"github.com/yongsan/yongsan-at-your-service/internal/dockerimage"
 )
 
@@ -25,18 +28,39 @@ func (a *app) deleteDockerImages() *cobra.Command {
 	cmd.Flags().StringVar(&filter.Name, "name", "", "Exact image repository basename (all tags), or full repository path")
 	cmd.Flags().StringVar(&filter.Tag, "tag", "", "Exact Docker image tag across repositories (not a Git tag)")
 	cmd.Flags().BoolVar(&yes, "yes", false, "Delete the previewed image references without an interactive confirmation")
-	cmd.Flags().IntVar(&concurrency, "concurrency", 4, "Maximum simultaneous image-reference deletion jobs")
+	cmd.Flags().IntVar(&concurrency, "concurrency", config.DefaultImageDeletionConcurrency, "Maximum simultaneous image-reference deletion jobs (overrides image_deletion.concurrency)")
 	report.bind(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		if a.format != "text" && a.format != "json" {
 			return usageError(fmt.Errorf("--format must be text or json"))
 		}
-		if concurrency < 1 {
+		if changed(cmd, "concurrency") && concurrency < 1 {
 			return usageError(fmt.Errorf("--concurrency must be positive"))
 		}
 		if err := report.validate(cmd); err != nil {
 			return usageError(err)
 		}
+		filename, err := a.configPath()
+		if err != nil {
+			return usageError(err)
+		}
+		cfg, err := config.LoadFile(filename)
+		if err != nil {
+			// A missing operational config is optional; an existing broken
+			// symlink must not silently discard configured execution settings.
+			_, statErr := os.Lstat(filename)
+			if !errors.Is(err, os.ErrNotExist) || !errors.Is(statErr, os.ErrNotExist) {
+				return usageError(err)
+			}
+			cfg = &config.Config{ImageDeletion: config.ImageDeletionConfig{Concurrency: config.DefaultImageDeletionConcurrency}}
+		}
+		if changed(cmd, "concurrency") {
+			cfg.ImageDeletion.Concurrency = concurrency
+		}
+		if err := cfg.ValidateImageDeletion(); err != nil {
+			return usageError(err)
+		}
+		concurrency = cfg.ImageDeletion.Concurrency
 		for name, value := range map[string]string{"name": filter.Name, "tag": filter.Tag} {
 			if changed(cmd, name) && strings.TrimSpace(value) == "" {
 				return usageError(fmt.Errorf("--%s must not be empty", name))

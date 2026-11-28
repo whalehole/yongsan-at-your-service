@@ -23,7 +23,7 @@ func TestDefaultsAndEmptyOperationLists(t *testing.T) {
 	if c.GitLab.URL != "https://gitlab.com" || c.GitLab.TokenEnv != "GITLAB_TOKEN" || c.GitLab.InsecureSkipVerify {
 		t.Fatalf("unexpected GitLab defaults: %+v", c.GitLab)
 	}
-	if c.Tagging.Concurrency != 8 || c.Tagging.Timeout != "2m" || c.Building.Concurrency != 2 || c.Building.Timeout != "30m" || c.Release.Concurrency != 8 || c.Release.Timeout != "2m" {
+	if c.Tagging.Concurrency != 8 || c.Tagging.Timeout != "2m" || c.Building.Concurrency != 2 || c.Building.Timeout != "30m" || c.Release.Concurrency != 8 || c.Release.Timeout != "2m" || c.ImageDeletion.Concurrency != 4 {
 		t.Fatalf("unexpected execution defaults: %+v", c)
 	}
 	if c.Building.Defaults.Context != "." || c.Building.Defaults.Dockerfile != "Dockerfile" || c.Building.Defaults.NoCache == nil || *c.Building.Defaults.NoCache {
@@ -151,6 +151,54 @@ func TestExplicitZeroSettingsAreRejected(t *testing.T) {
 	} {
 		if err := mustParse(t, input).Validate(); err == nil {
 			t.Fatalf("expected invalid execution settings: %s", input)
+		}
+	}
+}
+
+func TestImageDeletionConcurrencyConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		name, settings string
+		want           int
+		valid          bool
+	}{
+		{name: "omitted", want: 4, valid: true},
+		{name: "empty section", settings: "image_deletion: {}\n", want: 4, valid: true},
+		{name: "serial", settings: "image_deletion:\n  concurrency: 1\n", want: 1, valid: true},
+		{name: "larger batch", settings: "image_deletion:\n  concurrency: 64\n", want: 64, valid: true},
+		{name: "zero", settings: "image_deletion:\n  concurrency: 0\n"},
+		{name: "negative", settings: "image_deletion:\n  concurrency: -2\n", want: -2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := mustParse(t, "version: 1\n"+tc.settings)
+			if c.ImageDeletion.Concurrency != tc.want {
+				t.Fatalf("image_deletion.concurrency=%d, want %d", c.ImageDeletion.Concurrency, tc.want)
+			}
+			for _, validate := range []func() error{c.ValidateImageDeletion, c.Validate} {
+				err := validate()
+				if tc.valid && err != nil {
+					t.Fatal(err)
+				}
+				if !tc.valid && (err == nil || !strings.Contains(err.Error(), "image_deletion.concurrency")) {
+					t.Fatalf("invalid concurrency was not identified: %v", err)
+				}
+			}
+		})
+	}
+	for _, value := range []string{"many", "1.5", "true", "[4]", "{workers: 4}"} {
+		t.Run(value, func(t *testing.T) {
+			if _, err := Parse(strings.NewReader("version: 1\nimage_deletion:\n  concurrency: " + value + "\n")); err == nil {
+				t.Fatal("non-integer concurrency was accepted")
+			}
+		})
+	}
+	for _, settings := range []string{
+		"tagging: {concurrency: &workers 1.5}\nimage_deletion: {concurrency: *workers}\n",
+		"image_deletion:\n  <<: {concurrency: 1.5}\n",
+		"image_deletion:\n  <<: &defaults {concurrency: 1.5}\n",
+		"image_deletion:\n  <<: [{concurrency: 1.5}]\n",
+	} {
+		if _, err := Parse(strings.NewReader("version: 1\n" + settings)); err == nil || !strings.Contains(err.Error(), "image_deletion.concurrency must be an integer") {
+			t.Fatalf("fractional YAML value was accepted: %q (%v)", settings, err)
 		}
 	}
 }

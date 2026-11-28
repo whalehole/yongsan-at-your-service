@@ -66,7 +66,7 @@ A relative `working_directory` is resolved from the executable's directory. Only
 
 Relative command-line input/output paths are resolved from the configured working directory. Default batch reports use `reports/`, image archives use `images/<batch-id>/`, release drafts use `release-notes/yaml/`, and rendered release HTML uses `release-notes/html/` there. Absolute paths are honored. Repository build contexts and Dockerfile paths retain their repository-relative meanings.
 
-Use a built executable for initialization and normal runs: `go run` creates a temporary executable, which also changes the default working directory. Help, version, and the interactive root menu do not require operational configuration. `config init` creates it; `config validate` checks it locally without a token. Release rendering and Docker image deletion also need no operational configuration or GitLab token, but read the executable-side locator if present to find the working directory; malformed locator YAML is reported as an error.
+Use a built executable for initialization and normal runs: `go run` creates a temporary executable, which also changes the default working directory. Help, version, and the interactive root menu do not require operational configuration. `config init` creates it; `config validate` checks it locally without a token. Release rendering requires no operational configuration or token. Docker image deletion reads optional operational settings and uses defaults when that file is absent, without requiring GitLab settings or a token. Both read the executable-side locator if present to find the working directory; malformed locator YAML is reported as an error.
 
 ## GitLab authentication
 
@@ -301,7 +301,7 @@ Deletion removes the remote Git tag regardless of its commit, and does not chang
 
 ## Delete Docker images
 
-`yas image delete batch` selects tagged image references from the Docker daemon chosen by your current Docker context and environment. It needs the Docker CLI and a reachable daemon, without operational configuration or a GitLab token. This command removes daemon image references; `yas tag delete` removes GitLab tags. Images in a registry are not deleted. [Docker image removal reference](https://docs.docker.com/reference/cli/docker/image/rm/)
+`yas image delete batch` selects tagged image references from the Docker daemon chosen by your current Docker context and environment. It needs the Docker CLI and a reachable daemon. Operational configuration is optional, and no GitLab settings or token are required. This command removes daemon image references; `yas tag delete` removes GitLab tags. Images in a registry are not deleted. [Docker image removal reference](https://docs.docker.com/reference/cli/docker/image/rm/)
 
 ```bash
 # Preview every tag whose repository basename is exactly accesscontrols-service:
@@ -329,7 +329,16 @@ With neither selection flag supplied, interactive mode offers selection by name 
 
 The application snapshots the inventory and displays the preview once. Each worker rechecks its reference before removal to confirm it still points to the snapshotted image ID: a changed reference fails, and a reference already absent is skipped. These checks are not atomic with removal, so concurrent Docker activity can still race with the command.
 
-`--concurrency N` must be a positive integer and defaults to `4`. The actual worker count is the smaller of `N` and the number of matching references; use `--concurrency 1` for serial removal. `--timeout` defaults to `2m` for inventory discovery and for each image-reference job. A job's timeout starts when its worker begins, excluding time waiting in the queue. Reports record the actual concurrency.
+Set the default worker count in the operational `<working-directory>/yas.yaml`:
+
+```yaml
+image_deletion:
+  concurrency: 4
+```
+
+The value must be a positive integer and defaults to `4` when omitted or when the operational file is absent. An explicit `--concurrency N` overrides the configured value for that invocation; use `--concurrency 1` for serial removal. A valid command-line override can replace a zero or negative configured value; malformed YAML or a value of the wrong type still fails to load. The actual worker count is the smaller of the selected concurrency and the number of matching references. Reports record the actual concurrency.
+
+`--timeout` defaults to `2m` for inventory discovery and for each image-reference job. A job's timeout starts when its worker begins, excluding time waiting in the queue.
 
 Removal always names the full matching `repository:tag`, never an image ID. The command supplies no `--force` and does not stop or remove containers. Nonmatching tags sharing the same image ID are not requested for deletion, and Docker retains image data still referenced elsewhere. Removing a tagged reference can therefore untag an image without reclaiming its layers. [Docker tag and image removal behavior](https://docs.docker.com/reference/cli/docker/image/rm/)
 
@@ -665,6 +674,9 @@ building:
     - project: my-group/service-a
     - project: my-group/subgroup/service-c
 
+image_deletion:
+  concurrency: 4
+
 release:
   concurrency: 8
   timeout: 2m
@@ -705,6 +717,7 @@ The lists are independent: this example tags services A and B, builds services A
 | `building.repositories[].project` | Required project ID or full namespace/project path |
 | `building.repositories[].source` | Not needed; legacy values are superseded by the required runtime batch tag |
 | Build options on a repository entry | Override corresponding build defaults |
+| `image_deletion.concurrency` | `4`; positive worker count for Docker image deletion; overridden by `--concurrency` |
 | `release.concurrency` | `8`; must be positive |
 | `release.timeout` | `2m`; positive time limit for each component scan |
 | `release.repositories[].project` | Required project ID or full namespace/project path for release scanning |
@@ -742,7 +755,7 @@ The `one` commands use the shared connection settings, operation timeouts, appli
 | `--format text\|json` | Operation result format; default `text` |
 | `--no-progress` | Hide live operation progress; Docker logs and final results remain |
 | `--non-interactive` | Error on missing required inputs instead of prompting |
-| `--concurrency N` | Batch commands and release scans; maximum simultaneous jobs; Docker image deletion defaults to `4` |
+| `--concurrency N` | Batch commands and release scans; maximum simultaneous jobs; overrides Docker image deletion's configured default (`4` when unset) |
 | `--only PROJECT` | GitLab batch commands and release scans; repeatable selection from that operation's configured list |
 | `--report PATH` | Batch commands only; save the HTML report to a new `.html` file at this path |
 | `--no-report` | Batch commands only; disable the automatic saved report |

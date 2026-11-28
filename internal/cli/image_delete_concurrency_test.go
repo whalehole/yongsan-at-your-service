@@ -22,17 +22,24 @@ func TestDockerImageDeleteConcurrencyOverlapsProcessesWithoutLosingResultOrder(t
 	for _, tc := range []struct {
 		name        string
 		concurrency string
+		config      string
 		matches     int
 		workers     int
 	}{
 		{name: "default four workers", matches: 6, workers: 4},
 		{name: "override two workers", concurrency: "2", matches: 6, workers: 2},
 		{name: "override one worker", concurrency: "1", matches: 6, workers: 1},
+		{name: "configured two workers", config: "image_deletion:\n  concurrency: 2\n", matches: 6, workers: 2},
 		{name: "workers capped by matches", matches: 2, workers: 2},
 		{name: "no matches starts no workers", matches: 0, workers: 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			directory := workingDirectory(t)
+			if tc.config != "" {
+				if err := os.WriteFile(filepath.Join(directory, "yas.yaml"), []byte(tc.config), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			control := filepath.Join(directory, "barriers")
 			for _, child := range []string{"started", "completed", "release"} {
 				if err := os.MkdirAll(filepath.Join(control, child), 0700); err != nil {

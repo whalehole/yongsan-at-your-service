@@ -20,18 +20,21 @@ import (
 
 const Filename = "yas.yaml"
 
+const DefaultImageDeletionConcurrency = 4
+
 // Example is the starter configuration written by yas config init.
 //
 //go:embed example.yaml
 var Example string
 
 type Config struct {
-	Version          int            `yaml:"version"`
-	WorkingDirectory string         `yaml:"working_directory"`
-	GitLab           GitLabConfig   `yaml:"gitlab"`
-	Tagging          TaggingConfig  `yaml:"tagging"`
-	Building         BuildingConfig `yaml:"building"`
-	Release          ReleaseConfig  `yaml:"release"`
+	Version          int                 `yaml:"version"`
+	WorkingDirectory string              `yaml:"working_directory"`
+	GitLab           GitLabConfig        `yaml:"gitlab"`
+	Tagging          TaggingConfig       `yaml:"tagging"`
+	Building         BuildingConfig      `yaml:"building"`
+	ImageDeletion    ImageDeletionConfig `yaml:"image_deletion"`
+	Release          ReleaseConfig       `yaml:"release"`
 }
 
 type GitLabConfig struct {
@@ -40,6 +43,10 @@ type GitLabConfig struct {
 	TokenEnv           string   `yaml:"token_env"`
 	Groups             []string `yaml:"groups"`
 	InsecureSkipVerify bool     `yaml:"insecure_skip_verify"`
+}
+
+type ImageDeletionConfig struct {
+	Concurrency int `yaml:"concurrency"`
 }
 
 type TaggingConfig struct {
@@ -162,13 +169,14 @@ func Parse(r io.Reader) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read YAML: %w", err)
 	}
-	if err := validateWorkingDirectoryType(data); err != nil {
+	if err := validateConfigScalarTypes(data); err != nil {
 		return nil, err
 	}
 	c := &Config{
-		GitLab:  GitLabConfig{URL: "https://gitlab.com", TokenEnv: "GITLAB_TOKEN"},
-		Tagging: TaggingConfig{Concurrency: 8, Timeout: "2m"},
-		Release: ReleaseConfig{Concurrency: 8, Timeout: "2m"},
+		GitLab:        GitLabConfig{URL: "https://gitlab.com", TokenEnv: "GITLAB_TOKEN"},
+		Tagging:       TaggingConfig{Concurrency: 8, Timeout: "2m"},
+		Release:       ReleaseConfig{Concurrency: 8, Timeout: "2m"},
+		ImageDeletion: ImageDeletionConfig{Concurrency: DefaultImageDeletionConcurrency},
 		Building: BuildingConfig{
 			Concurrency: 2,
 			Timeout:     "30m",
@@ -208,6 +216,9 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := c.ValidateBuilding(); err != nil {
+		return err
+	}
+	if err := c.ValidateImageDeletion(); err != nil {
 		return err
 	}
 	return c.ValidateRelease()
@@ -297,6 +308,13 @@ func (c *Config) ValidateBuilding() error {
 			return fmt.Errorf("building.repositories[%d]: duplicate output image %s", i, entry.Image)
 		}
 		seen[entry.Image] = true
+	}
+	return nil
+}
+
+func (c *Config) ValidateImageDeletion() error {
+	if c.ImageDeletion.Concurrency < 1 {
+		return errors.New("image_deletion.concurrency must be greater than zero")
 	}
 	return nil
 }

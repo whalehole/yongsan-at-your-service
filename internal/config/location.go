@@ -86,10 +86,10 @@ func checkWorkingDirectory(directory string) error {
 	return nil
 }
 
-// YAML decodes numeric and Boolean scalars into string fields by coercion.
-// A workspace path must instead be a string (or null for the default), while
-// the normal typed decoder continues to enforce all known configuration fields.
-func validateWorkingDirectoryType(data []byte) error {
+// YAML coerces numbers and Booleans into strings, and truncates floats when
+// decoding integers. Check scalar types that must not use these conversions;
+// the normal typed decoder still enforces known configuration fields.
+func validateConfigScalarTypes(data []byte) error {
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {
 		return fmt.Errorf("decode YAML: %w", err)
@@ -106,6 +106,11 @@ func validateWorkingDirectoryType(data []byte) error {
 		}
 		if node.Kind == yaml.MappingNode {
 			for i := 0; i+1 < len(node.Content); i += 2 {
+				if node.Content[i].Value == "image_deletion" {
+					if err := validateImageDeletionScalarTypes(node.Content[i+1], map[*yaml.Node]bool{}); err != nil {
+						return err
+					}
+				}
 				if node.Content[i].Value != "working_directory" {
 					continue
 				}
@@ -128,4 +133,43 @@ func validateWorkingDirectoryType(data []byte) error {
 		return nil
 	}
 	return walk(&root)
+}
+
+func validateImageDeletionScalarTypes(node *yaml.Node, seen map[*yaml.Node]bool) error {
+	if node == nil || seen[node] {
+		return nil
+	}
+	seen[node] = true
+	if node.Kind == yaml.AliasNode {
+		return validateImageDeletionScalarTypes(node.Alias, seen)
+	}
+	if node.Kind == yaml.SequenceNode {
+		for _, child := range node.Content {
+			if err := validateImageDeletionScalarTypes(child, seen); err != nil {
+				return err
+			}
+		}
+	}
+	if node.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			key, value := node.Content[i], node.Content[i+1]
+			if key.Value == "<<" {
+				if err := validateImageDeletionScalarTypes(value, seen); err != nil {
+					return err
+				}
+			}
+			if key.Value != "concurrency" {
+				continue
+			}
+			aliases := map[*yaml.Node]bool{}
+			for value != nil && value.Kind == yaml.AliasNode && !aliases[value] {
+				aliases[value] = true
+				value = value.Alias
+			}
+			if value == nil || value.Kind != yaml.ScalarNode || value.ShortTag() != "!!int" && value.ShortTag() != "!!null" {
+				return errors.New("image_deletion.concurrency must be an integer")
+			}
+		}
+	}
+	return nil
 }

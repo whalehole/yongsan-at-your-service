@@ -52,6 +52,11 @@ building:
     - project: my-group/service-a
     - project: my-group/subgroup/service-c
 
+# Optional Docker image-deletion worker count; --concurrency overrides this value.
+# The default is 4, and no GitLab token is needed for image deletion.
+image_deletion:
+  concurrency: 4
+
 # Release scans use this independent list, never tagging.repositories or building.repositories.
 # Group selection uses the namespace prefixes in these project paths.
 release:
