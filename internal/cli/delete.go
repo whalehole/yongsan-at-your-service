@@ -41,6 +41,9 @@ func (a *app) deleteTag(batch bool) *cobra.Command {
 		if err != nil {
 			return err
 		}
+		if batch {
+			report.configure(cmd, cfg)
+		}
 		if batch && changed(cmd, "concurrency") {
 			cfg.Tagging.Concurrency = concurrency
 		}

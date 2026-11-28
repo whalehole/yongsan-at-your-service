@@ -29,6 +29,36 @@ func TestDefaultsAndEmptyOperationLists(t *testing.T) {
 	if c.Building.Defaults.Context != "." || c.Building.Defaults.Dockerfile != "Dockerfile" || c.Building.Defaults.NoCache == nil || *c.Building.Defaults.NoCache {
 		t.Fatalf("unexpected build defaults: %+v", c.Building.Defaults)
 	}
+	if c.Reports.AutoOpen {
+		t.Fatal("report opening must be disabled by default")
+	}
+}
+
+func TestReportsAutoOpenConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		name, settings string
+		want           bool
+	}{
+		{name: "omitted"},
+		{name: "empty section", settings: "reports: {}\n"},
+		{name: "enabled", settings: "reports:\n  auto_open: true\n", want: true},
+		{name: "disabled", settings: "reports:\n  auto_open: false\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := mustParse(t, "version: 1\n"+tc.settings)
+			if c.Reports.AutoOpen != tc.want {
+				t.Fatalf("reports.auto_open=%v, want %v", c.Reports.AutoOpen, tc.want)
+			}
+			if err := c.Validate(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	for _, settings := range []string{"auto_open: 1", "auto_open: enabled", "auto_open: [true]", "auto_open: {enabled: true}", "auto_opne: true"} {
+		if _, err := Parse(strings.NewReader("version: 1\nreports:\n  " + settings + "\n")); err == nil {
+			t.Fatalf("invalid report configuration was accepted: %s", settings)
+		}
+	}
 }
 
 func TestExampleValidates(t *testing.T) {

@@ -30,6 +30,7 @@ var Example string
 type Config struct {
 	Version          int                 `yaml:"version"`
 	WorkingDirectory string              `yaml:"working_directory"`
+	Reports          ReportsConfig       `yaml:"reports"`
 	GitLab           GitLabConfig        `yaml:"gitlab"`
 	Tagging          TaggingConfig       `yaml:"tagging"`
 	Building         BuildingConfig      `yaml:"building"`
@@ -47,6 +48,10 @@ type GitLabConfig struct {
 
 type ImageDeletionConfig struct {
 	Concurrency int `yaml:"concurrency"`
+}
+
+type ReportsConfig struct {
+	AutoOpen bool `yaml:"auto_open"`
 }
 
 type TaggingConfig struct {

@@ -238,6 +238,13 @@ func (a *app) executeWithReport(ctx context.Context, jobs []job, concurrency int
 	}
 	outputErr := writeResults(a.options.Out, a.format, results)
 	progressErr := progressError()
+	if report != nil && report.saved && report.autoOpen {
+		if err := openBatchReport(report.path); err != nil {
+			// Opening is a convenience; preserve the batch result and saved
+			// report when a browser or desktop session is unavailable.
+			fmt.Fprintf(a.options.Err, "Warning: could not open batch report %q: %v\n", report.path, err)
+		}
+	}
 	failures := 0
 	for _, r := range results {
 		if r.Status == "failed" {

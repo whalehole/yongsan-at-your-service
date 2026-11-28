@@ -327,6 +327,7 @@ func (a *app) tagBatch() *cobra.Command {
 		if err != nil {
 			return err
 		}
+		report.configure(cmd, cfg)
 		if changed(cmd, "concurrency") {
 			cfg.Tagging.Concurrency = concurrency
 		}
@@ -558,6 +559,7 @@ func (a *app) buildBatch() *cobra.Command {
 		if err != nil {
 			return err
 		}
+		report.configure(cmd, cfg)
 		if changed(cmd, "concurrency") {
 			cfg.Building.Concurrency = concurrency
 		}

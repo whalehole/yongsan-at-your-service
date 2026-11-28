@@ -6,6 +6,10 @@ version: 1
 # Relative paths start from that directory. A redirected config does not redirect again.
 working_directory: ""
 
+# Opt in to opening saved batch reports with the system's default HTML handler.
+reports:
+  auto_open: false
+
 gitlab:
   url: https://gitlab.com
   # True skips TLS server identity checks and can expose your token to impersonation.

@@ -10,20 +10,32 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/yongsan/yongsan-at-your-service/internal/config"
 )
 
 type batchReportOptions struct {
 	path      string
 	disabled  bool
+	open      bool
+	noOpen    bool
+	autoOpen  bool
 	selection string
 }
 
 func (o *batchReportOptions) bind(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&o.path, "report", "", "Save the batch HTML report to a new .html file (default: reports/unique-name.html)")
 	cmd.Flags().BoolVar(&o.disabled, "no-report", false, "Do not save a batch report")
+	cmd.Flags().BoolVar(&o.open, "open-report", false, "Open the saved batch report in the default browser (overrides reports.auto_open)")
+	cmd.Flags().BoolVar(&o.noOpen, "no-open-report", false, "Do not open the saved batch report (overrides reports.auto_open)")
 }
 
 func (o batchReportOptions) validate(cmd *cobra.Command) error {
+	if changed(cmd, "open-report") && changed(cmd, "no-open-report") {
+		return fmt.Errorf("--open-report and --no-open-report cannot be used together")
+	}
+	if o.disabled && (changed(cmd, "open-report") && o.open || changed(cmd, "no-open-report") && !o.noOpen) {
+		return fmt.Errorf("opening a batch report cannot be enabled with --no-report")
+	}
 	if changed(cmd, "report") && strings.TrimSpace(o.path) == "" {
 		return fmt.Errorf("--report must name a new .html file")
 	}
@@ -38,11 +50,22 @@ func (o batchReportOptions) validate(cmd *cobra.Command) error {
 	return nil
 }
 
+func (o *batchReportOptions) configure(cmd *cobra.Command, cfg *config.Config) {
+	o.autoOpen = cfg.Reports.AutoOpen
+	if changed(cmd, "open-report") {
+		o.autoOpen = o.open
+	}
+	if changed(cmd, "no-open-report") {
+		o.autoOpen = !o.noOpen
+	}
+}
+
 type batchReportRun struct {
-	data  batchReport
-	file  *os.File
-	path  string
-	saved bool
+	data     batchReport
+	file     *os.File
+	path     string
+	saved    bool
+	autoOpen bool
 }
 
 // Reserve a new destination before any repository jobs run. This also prevents
@@ -118,6 +141,7 @@ func (a *app) executeBatch(ctx context.Context, jobs []job, concurrency int, tim
 		return operationError(err)
 	}
 	defer report.cleanup()
+	report.autoOpen = options.autoOpen
 	report.data = batchReport{
 		Operation: operation, Version: a.options.Version, Server: server,
 		DryRun: a.dryRun, Timeout: timeout,

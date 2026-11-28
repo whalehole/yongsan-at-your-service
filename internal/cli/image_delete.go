@@ -60,6 +60,7 @@ func (a *app) deleteDockerImages() *cobra.Command {
 		if err := cfg.ValidateImageDeletion(); err != nil {
 			return usageError(err)
 		}
+		report.configure(cmd, cfg)
 		concurrency = cfg.ImageDeletion.Concurrency
 		for name, value := range map[string]string{"name": filter.Name, "tag": filter.Tag} {
 			if changed(cmd, name) && strings.TrimSpace(value) == "" {

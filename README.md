@@ -651,6 +651,9 @@ Rendering continues after individual read/parse failures or existing output file
 version: 1
 working_directory: ""
 
+reports:
+  auto_open: false
+
 gitlab:
   url: https://gitlab.com
   token: "your-gitlab-access-token"
@@ -693,6 +696,7 @@ The lists are independent: this example tags services A and B, builds services A
 | --- | --- |
 | `version` | Required; must be `1` |
 | `working_directory` | Empty by default, using the resolved executable's directory; set only in executable-side `yas.yaml` to choose the workspace; relative values start from the executable's directory |
+| `reports.auto_open` | `false`; opt in to opening successfully saved batch reports with the system's default HTML handler |
 | `gitlab.url` | `https://gitlab.com` |
 | `gitlab.insecure_skip_verify` | `false`; enable explicitly to skip GitLab TLS certificate verification |
 | `gitlab.token` | Optional access token stored directly in the config; takes precedence over environment authentication |
@@ -758,7 +762,9 @@ The `one` commands use the shared connection settings, operation timeouts, appli
 | `--concurrency N` | Batch commands and release scans; maximum simultaneous jobs; overrides Docker image deletion's configured default (`4` when unset) |
 | `--only PROJECT` | GitLab batch commands and release scans; repeatable selection from that operation's configured list |
 | `--report PATH` | Batch commands only; save the HTML report to a new `.html` file at this path |
-| `--no-report` | Batch commands only; disable the automatic saved report |
+| `--no-report` | Batch commands only; disable saving and opening the report |
+| `--open-report[=BOOL]` | Batch commands only; override `reports.auto_open` to open saved reports (`false` disables it) |
+| `--no-open-report[=BOOL]` | Batch commands only; suppress automatic opening (`false` enables it) |
 | `--name NAME` | Docker image deletion only; select an exact basename or full repository path |
 | `--yes` | Docker image deletion only; approve the previewed removals without a confirmation prompt |
 
@@ -816,6 +822,24 @@ yas tag delete batch --tag old-release --no-report
 ```
 
 `--report` accepts an absolute path or a path relative to the configured working directory and requires a `.html` extension. Existing files are never overwritten. `--report` and `--no-report` cannot be used together when reporting is disabled. The saved report path is printed to stderr, including with `--no-progress`, so text/JSON stdout retains its existing format.
+
+Reports are saved without opening an application by default. To open them automatically with the operating system's default HTML handler/browser, add this to the working directory's operational `yas.yaml`:
+
+```yaml
+reports:
+  auto_open: true
+```
+
+This setting applies to all four batch commands listed above, including interactive and root-menu runs. Explicit `--open-report` or `--no-open-report` flags override it for one invocation:
+
+```bash
+yas build batch --tag v1.2.0 --open-report
+yas tag batch --branch release/1.2 --no-open-report
+```
+
+`--open-report=false` disables opening; `--no-open-report=false` enables it. The two flag names are mutually exclusive whenever both are explicitly supplied, including with `false` values. `--no-report` suppresses both saving and opening even when the configuration enables automatic opening. An override that explicitly enables opening (`--open-report` or `--no-open-report=false`) cannot be combined with `--no-report=true`; `--open-report=false` can.
+
+Opening happens only after a successful report save, including reports from failed or canceled batches. A failed save never opens a report. If the system launcher fails, a warning is written to stderr while the saved report, operation results, and original batch exit code are retained.
 
 The report destination is reserved before jobs run; an unavailable destination stops execution before any repository operation starts. Configuration, validation, or prompt errors before execution do not create reports. Once jobs run, their results are saved before terminal output or the final failure is returned. A report-writing failure returns exit code `1` even if the repository operations succeeded; completed operations are not rolled back.
 
